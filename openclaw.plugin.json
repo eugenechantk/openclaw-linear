@@ -1,0 +1,19 @@
+{
+  "id": "linear",
+  "name": "Linear",
+  "description": "Linear project management integration for OpenClaw",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "apiKey": {
+        "type": "string",
+        "sensitive": true
+      },
+      "webhookSecret": {
+        "type": "string",
+        "sensitive": true
+      }
+    }
+  }
+}
