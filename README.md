@@ -1,12 +1,12 @@
 # @openclaw/linear
 
-Linear project management integration for OpenClaw. Provides webhook-driven notifications and CRUD tools for agents to interact with Linear issues.
+Linear webhook integration for OpenClaw. Receives Linear events and routes them to agents as consolidated notifications.
 
 ## Features
 
 - **Webhook handler** — receives Linear webhook events with HMAC signature verification
 - **Event router** — routes issue assignments and comment mentions to the right agent
-- **Agent tools** — list, create, update issues and add comments directly from agents
+- **Debounced dispatch** — batches rapid-fire events into a single consolidated message
 - **Push notifications** — replaces heartbeat polling with real-time webhook delivery
 
 ## Install
@@ -22,7 +22,6 @@ Add the plugin to your OpenClaw config:
 ```yaml
 plugins:
   linear:
-    apiKey: "lin_api_xxxxxxxxxxxx"
     webhookSecret: "your-webhook-signing-secret"
     teamIds: ["ENG", "OPS"]          # Optional: filter to specific teams (empty = all)
     eventFilter: ["Issue", "Comment"] # Optional: filter event types (empty = all)
@@ -36,7 +35,6 @@ plugins:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `apiKey` | string | **Yes** | Linear API key. Generate at **Settings > API > Personal API keys** in Linear. |
 | `webhookSecret` | string | **Yes** | Shared secret for HMAC webhook signature verification. |
 | `teamIds` | string[] | No | Team keys to scope webhook processing. Empty array = all teams. |
 | `eventFilter` | string[] | No | Event types to handle (`Issue`, `Comment`, etc.). Empty = all. |
@@ -83,29 +81,6 @@ Linear ticket assigned → Linear sends webhook POST
   → Agent receives wake event with issue context
   → Agent processes and replies → reply posted as Linear comment
 ```
-
-## Agent Tools
-
-Once the plugin is active, agents get four tools. See [`skills/linear/SKILL.md`](skills/linear/SKILL.md) for full documentation.
-
-| Tool | Description |
-|------|-------------|
-| `linear_list_issues` | List issues with filters (state, assignee, team, labels) |
-| `linear_create_issue` | Create a new issue |
-| `linear_update_issue` | Update issue state, assignee, priority, description |
-| `linear_add_comment` | Add a comment to an issue |
-
-## Fallback: Heartbeat Polling
-
-If webhook delivery fails (network issues, endpoint down), agents can fall back to heartbeat-based polling:
-
-```markdown
-# In agent's HEARTBEAT.md
-- [ ] Check Linear for new assignments: `linear_list_issues { "assignee": "Me", "state": "Todo" }`
-- [ ] Process any new issues found
-```
-
-This is a safety net — under normal operation, webhooks provide real-time delivery. Monitor webhook health in Linear's webhook settings page (shows delivery status and recent failures).
 
 ## Development
 

@@ -6,11 +6,6 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "apiKey": {
-        "type": "string",
-        "sensitive": true,
-        "description": "Linear API key (Settings > API > Personal API keys)"
-      },
       "webhookSecret": {
         "type": "string",
         "sensitive": true,
@@ -36,6 +31,6 @@
         "description": "Debounce window in milliseconds for batching webhook events before dispatch (default: 30000)"
       }
     },
-    "required": ["apiKey", "webhookSecret"]
+    "required": ["webhookSecret"]
   }
 }

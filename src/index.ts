@@ -1,12 +1,6 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import type { LinearClient } from "@linear/sdk";
 import { createWebhookHandler } from "./webhook-handler.js";
 import { createEventRouter, type RouterAction } from "./event-router.js";
-import { createLinearClient } from "./linear-client.js";
-import { registerCreateIssueTool } from "./tools/create-issue.js";
-import { registerListIssuesTool } from "./tools/list-issues.js";
-import { registerUpdateIssueTool } from "./tools/update-issue.js";
-import { registerAddCommentTool } from "./tools/add-comment.js";
 
 const CHANNEL_ID = "linear";
 const DEFAULT_DEBOUNCE_MS = 30_000;
@@ -59,7 +53,6 @@ function formatActionSummary(action: RouterAction): string {
 async function dispatchConsolidatedActions(
   actions: RouterAction[],
   api: OpenClawPluginApi,
-  linearClient?: LinearClient,
 ): Promise<void> {
   if (actions.length === 0) return;
 
@@ -117,18 +110,6 @@ async function dispatchConsolidatedActions(
 export function activate(api: OpenClawPluginApi): void {
   api.logger.info("Linear plugin activated");
 
-  // Register agent tools if API key is available
-  const apiKey = api.pluginConfig?.["apiKey"] as string | undefined;
-  let linearClient: LinearClient | undefined;
-  if (apiKey) {
-    linearClient = createLinearClient(apiKey);
-    registerCreateIssueTool(api, linearClient);
-    registerListIssuesTool(api, linearClient);
-    registerUpdateIssueTool(api, linearClient);
-    registerAddCommentTool(api, linearClient);
-    api.logger.info("Linear agent tools registered (4 tools)");
-  }
-
   const webhookSecret = api.pluginConfig?.["webhookSecret"];
   if (typeof webhookSecret === "string" && webhookSecret) {
     const agentMapping =
@@ -152,7 +133,7 @@ export function activate(api: OpenClawPluginApi): void {
       buildKey: (action) => action.agentId,
       shouldDebounce: () => true,
       onFlush: async (actions) => {
-        await dispatchConsolidatedActions(actions, api, linearClient);
+        await dispatchConsolidatedActions(actions, api);
       },
       onError: (err) => {
         api.logger.error(
