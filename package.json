@@ -1,15 +1,45 @@
 {
   "name": "@openclaw/linear",
   "version": "0.1.0",
-  "description": "Linear project management integration for OpenClaw",
+  "description": "Linear webhook integration for OpenClaw — receives events, routes them, and dispatches consolidated notifications to agents",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "prepublishOnly": "npm run build",
+    "prepack": "npm run build",
     "test": "vitest run"
+  },
+  "keywords": [
+    "openclaw",
+    "linear",
+    "webhook",
+    "plugin"
+  ],
+  "author": "Stepan Arsentjev",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stepandel/openclaw-linear.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.2.0"
   },
   "devDependencies": {
     "openclaw": "^2026.2.12",
