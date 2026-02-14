@@ -43,7 +43,7 @@ plugins:
 
 ## Webhook Setup
 
-1. **Make your endpoint publicly accessible.** The plugin listens at `/webhooks/linear`. Use Tailscale Funnel, ngrok, or a public server:
+1. **Make your endpoint publicly accessible.** The plugin listens at `/hooks/linear`. Use Tailscale Funnel, ngrok, or a public server:
    ```bash
    # Example with Tailscale Funnel
    tailscale funnel --bg 3000
@@ -52,12 +52,25 @@ plugins:
 2. **Register the webhook in Linear:**
    - Go to **Settings > API > Webhooks** in your Linear workspace
    - Click **New webhook**
-   - Set the URL to `https://your-host/webhooks/linear`
+   - Set the URL to `https://your-host/hooks/linear`
    - Set the secret to match your `webhookSecret` config value
    - Select the event types you want (Issues, Comments, etc.)
    - Save
 
 3. **Verify it works:** Assign a Linear issue to a mapped user — the corresponding agent should receive a wake event.
+
+## Routed Events
+
+| Linear Event | Router Action | Agent Event |
+|---|---|---|
+| Issue assigned to mapped user | `wake` | `issue.assigned` |
+| Issue unassigned from mapped user | `notify` | `issue.unassigned` |
+| Issue reassigned away from mapped user | `notify` | `issue.reassigned` |
+| @mention in comment (mapped user) | `wake` | `comment.mention` |
+
+`wake` dispatches the event to the agent through the OpenClaw channel system. `notify` logs the event (passive notification).
+
+When an agent replies to a `wake` event, the reply is posted back as a comment on the Linear issue.
 
 ## End-to-End Flow
 
@@ -65,8 +78,8 @@ plugins:
 Linear ticket assigned → Linear sends webhook POST
   → Plugin verifies HMAC signature
   → Event router matches assignee to agent via agentMapping
-  → Agent receives wake/notify event
-  → Agent uses Linear tools to update the issue
+  → Agent receives wake event with issue context
+  → Agent processes and replies → reply posted as Linear comment
 ```
 
 ## Agent Tools
