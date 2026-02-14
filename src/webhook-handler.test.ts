@@ -132,4 +132,49 @@ describe("webhook-handler", () => {
     await handler(req, res);
     expect(res.statusCode).toBe(405);
   });
+
+  it("returns 200 even when onEvent throws", async () => {
+    const onEvent = vi.fn(() => {
+      throw new Error("handler boom");
+    });
+    const h = createWebhookHandler({ webhookSecret: SECRET, logger, onEvent });
+
+    const body = JSON.stringify({
+      action: "update",
+      type: "Issue",
+      data: { id: "issue-err" },
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+    const req = makeReq(body, { "Linear-Signature": sign(body) });
+    const res = makeRes();
+    await h(req, res);
+
+    // Handler returns 200 despite onEvent throwing
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe("OK");
+    expect(onEvent).toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      "Event handler error: handler boom",
+    );
+  });
+
+  it("returns 413 for oversized request body", async () => {
+    const req = new EventEmitter() as IncomingMessage;
+    req.method = "POST";
+    req.headers = {};
+    const destroy = vi.fn();
+    (req as any).destroy = destroy;
+
+    const res = makeRes();
+
+    // Send 2MB payload in chunks
+    process.nextTick(() => {
+      const chunk = Buffer.alloc(1024 * 1024 + 1, "x");
+      req.emit("data", chunk);
+    });
+
+    await handler(req, res);
+    expect(res.statusCode).toBe(413);
+    expect(res.body).toBe("Payload Too Large");
+  });
 });

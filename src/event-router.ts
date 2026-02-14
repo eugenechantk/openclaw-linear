@@ -5,19 +5,72 @@ export type RouterAction = {
   agentId: string;
   event: string;
   detail: string;
+  issueId: string;
+  linearUserId: string;
 };
 
 export type EventRouterConfig = {
-  userMap: Record<string, string>;
+  agentMapping: Record<string, string>;
   logger: {
     info: (message: string) => void;
     error: (message: string) => void;
   };
+  eventFilter?: string[];
+  teamIds?: string[];
 };
 
-function extractMentionedUserIds(body: string): string[] {
-  const matches = body.matchAll(/@([a-zA-Z0-9_-]+)/g);
-  return [...matches].map((m) => m[1]);
+/**
+ * Extract mention user IDs from ProseMirror bodyData JSON.
+ * Traverses the document tree looking for "mention" nodes with an `attrs.id`.
+ */
+function extractMentionsFromProseMirror(node: unknown): string[] {
+  if (!node || typeof node !== "object") return [];
+  const n = node as Record<string, unknown>;
+  const ids: string[] = [];
+
+  if (n.type === "mention") {
+    const attrs = n.attrs as Record<string, unknown> | undefined;
+    const id = attrs?.id;
+    if (typeof id === "string" && id) {
+      ids.push(id);
+    }
+  }
+
+  const content = n.content;
+  if (Array.isArray(content)) {
+    for (const child of content) {
+      ids.push(...extractMentionsFromProseMirror(child));
+    }
+  }
+
+  return ids;
+}
+
+/**
+ * Extract mentioned user identifiers from a comment.
+ * Tries structured ProseMirror bodyData first (yields UUIDs), then
+ * falls back to regex on the markdown body (yields usernames/handles).
+ */
+function extractMentionedUserIds(
+  body: string,
+  bodyData?: unknown,
+): string[] {
+  if (bodyData) {
+    const ids = extractMentionsFromProseMirror(bodyData);
+    if (ids.length > 0) return [...new Set(ids)];
+  }
+
+  const matches = body.matchAll(/@([a-zA-Z0-9_.-]+)/g);
+  return [...new Set([...matches].map((m) => m[1]))];
+}
+
+function resolveIssueLabel(data: Record<string, unknown>): string {
+  const identifier = data.identifier as string | undefined;
+  const title = data.title as string | undefined;
+  const id = String(data.id ?? "unknown");
+
+  const label = identifier ?? id;
+  return title ? `${label}: ${title}` : label;
 }
 
 function handleIssueUpdate(
@@ -35,15 +88,18 @@ function handleIssueUpdate(
     to?: string;
   };
   const issueId = String(event.data.id ?? "unknown");
+  const issueLabel = resolveIssueLabel(event.data);
 
   if (newAssignee) {
-    const agentId = config.userMap[newAssignee];
+    const agentId = config.agentMapping[newAssignee];
     if (agentId) {
       actions.push({
         type: "wake",
         agentId,
         event: "issue.assigned",
-        detail: `Assigned to issue ${issueId}`,
+        detail: `Assigned to issue ${issueLabel}`,
+        issueId,
+        linearUserId: newAssignee,
       });
     } else {
       config.logger.info(
@@ -53,18 +109,35 @@ function handleIssueUpdate(
   }
 
   if (oldAssignee && !newAssignee) {
-    const agentId = config.userMap[oldAssignee];
+    const agentId = config.agentMapping[oldAssignee];
     if (agentId) {
       actions.push({
         type: "notify",
         agentId,
         event: "issue.unassigned",
-        detail: `Unassigned from issue ${issueId}`,
+        detail: `Unassigned from issue ${issueLabel}`,
+        issueId,
+        linearUserId: oldAssignee,
       });
     } else {
       config.logger.info(
         `Unmapped Linear user ${oldAssignee} unassigned from ${issueId}`,
       );
+    }
+  }
+
+  // Reassignment: both old and new assignee present — notify old assignee
+  if (oldAssignee && newAssignee) {
+    const agentId = config.agentMapping[oldAssignee];
+    if (agentId) {
+      actions.push({
+        type: "notify",
+        agentId,
+        event: "issue.reassigned",
+        detail: `Reassigned away from issue ${issueLabel}`,
+        issueId,
+        linearUserId: oldAssignee,
+      });
     }
   }
 
@@ -78,22 +151,26 @@ function handleComment(
   const body = event.data.body as string | undefined;
   if (!body) return [];
 
-  const mentionedIds = extractMentionedUserIds(body);
+  const bodyData = event.data.bodyData;
+  const mentionedIds = extractMentionedUserIds(body, bodyData);
   const actions: RouterAction[] = [];
-  const issueId = String(
-    (event.data.issue as Record<string, unknown> | undefined)?.id ??
-      event.data.issueId ??
-      "unknown",
-  );
+
+  const issueRef = event.data.issue as Record<string, unknown> | undefined;
+  const issueId = String(issueRef?.id ?? event.data.issueId ?? "unknown");
+  const issueLabel = issueRef
+    ? resolveIssueLabel(issueRef)
+    : issueId;
 
   for (const userId of mentionedIds) {
-    const agentId = config.userMap[userId];
+    const agentId = config.agentMapping[userId];
     if (agentId) {
       actions.push({
         type: "wake",
         agentId,
         event: "comment.mention",
-        detail: `Mentioned in comment on issue ${issueId}`,
+        detail: `Mentioned in comment on issue ${issueLabel}\n\n> ${body}`,
+        issueId,
+        linearUserId: userId,
       });
     } else {
       config.logger.info(
@@ -107,6 +184,25 @@ function handleComment(
 
 export function createEventRouter(config: EventRouterConfig) {
   return function route(event: LinearWebhookPayload): RouterAction[] {
+    // Apply event type filter
+    if (
+      config.eventFilter?.length &&
+      !config.eventFilter.includes(event.type)
+    ) {
+      return [];
+    }
+
+    // Apply team filter
+    const teamId = event.data.teamId as string | undefined;
+    const teamObj = event.data.team as Record<string, unknown> | undefined;
+    const teamKey = teamObj?.key as string | undefined;
+    if (config.teamIds?.length) {
+      const match = config.teamIds.some(
+        (t) => t === teamId || t === teamKey,
+      );
+      if (!match && (teamId || teamKey)) return [];
+    }
+
     if (event.type === "Issue" && event.action === "update") {
       return handleIssueUpdate(event, config);
     }

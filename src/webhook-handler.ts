@@ -17,7 +17,30 @@ type WebhookHandlerDeps = {
   onEvent?: (event: LinearWebhookPayload) => void;
 };
 
-const processedDeliveryIds = new Set<string>();
+const MAX_BODY_BYTES = 1024 * 1024; // 1 MB
+const DEDUP_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const DEDUP_MAX_SIZE = 10_000;
+
+/** Map of delivery ID → timestamp for duplicate detection with TTL. */
+const processedDeliveries = new Map<string, number>();
+
+function pruneDeliveries(): void {
+  const now = Date.now();
+  for (const [id, ts] of processedDeliveries) {
+    if (now - ts > DEDUP_TTL_MS) {
+      processedDeliveries.delete(id);
+    }
+  }
+  // Hard cap: if still too large, drop the oldest entries
+  if (processedDeliveries.size > DEDUP_MAX_SIZE) {
+    const excess = processedDeliveries.size - DEDUP_MAX_SIZE;
+    const iter = processedDeliveries.keys();
+    for (let i = 0; i < excess; i++) {
+      const key = iter.next().value;
+      if (key !== undefined) processedDeliveries.delete(key);
+    }
+  }
+}
 
 function verifySignature(body: string, signature: string, secret: string): boolean {
   const expected = createHmac("sha256", secret).update(body).digest("hex");
@@ -30,7 +53,16 @@ function verifySignature(body: string, signature: string, secret: string): boole
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        reject(new Error("Request body too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
@@ -47,9 +79,15 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     let rawBody: string;
     try {
       rawBody = await readBody(req);
-    } catch {
-      res.writeHead(500);
-      res.end("Internal Server Error");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("too large")) {
+        res.writeHead(413);
+        res.end("Payload Too Large");
+      } else {
+        res.writeHead(500);
+        res.end("Internal Server Error");
+      }
       return;
     }
 
@@ -60,21 +98,25 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
       return;
     }
 
+    let event: LinearWebhookPayload;
     try {
       const payload = JSON.parse(rawBody) as Record<string, unknown>;
       const deliveryId = req.headers["linear-delivery"] as string | undefined;
 
+      // Prune expired entries periodically
+      pruneDeliveries();
+
       if (deliveryId) {
-        if (processedDeliveryIds.has(deliveryId)) {
+        if (processedDeliveries.has(deliveryId)) {
           deps.logger.info(`Duplicate delivery skipped: ${deliveryId}`);
           res.writeHead(200);
           res.end("OK");
           return;
         }
-        processedDeliveryIds.add(deliveryId);
+        processedDeliveries.set(deliveryId, Date.now());
       }
 
-      const event: LinearWebhookPayload = {
+      event = {
         action: String(payload.action ?? ""),
         type: String(payload.type ?? ""),
         data: (payload.data as Record<string, unknown>) ?? {},
@@ -82,15 +124,22 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
       };
 
       deps.logger.info(`Linear webhook: ${event.action} ${event.type} (${String(event.data.id ?? "unknown")})`);
-
-      deps.onEvent?.(event);
-
-      res.writeHead(200);
-      res.end("OK");
     } catch (err) {
-      deps.logger.error(`Webhook processing error: ${err instanceof Error ? err.message : String(err)}`);
+      deps.logger.error(`Webhook parse error: ${err instanceof Error ? err.message : String(err)}`);
       res.writeHead(500);
       res.end("Internal Server Error");
+      return;
+    }
+
+    // Always return 200 after successful parse — onEvent errors must not
+    // cause Linear to retry (which could create a retry storm).
+    res.writeHead(200);
+    res.end("OK");
+
+    try {
+      deps.onEvent?.(event);
+    } catch (err) {
+      deps.logger.error(`Event handler error: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 }
