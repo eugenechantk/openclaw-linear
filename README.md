@@ -1,4 +1,4 @@
-# @stepandel/linear
+# openclaw-linear
 
 Linear webhook integration for OpenClaw. Receives Linear events, filters and routes them, and dispatches consolidated notifications to agents.
 
@@ -11,7 +11,7 @@ Linear webhook integration for OpenClaw. Receives Linear events, filters and rou
 ## Install
 
 ```bash
-openclaw plugins install @stepandel/linear
+openclaw plugins install openclaw-linear
 ```
 
 ## Configuration
