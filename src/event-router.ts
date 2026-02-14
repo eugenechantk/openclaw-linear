@@ -6,6 +6,7 @@ export type RouterAction = {
   event: string;
   detail: string;
   issueId: string;
+  issueLabel: string;
   linearUserId: string;
 };
 
@@ -99,6 +100,7 @@ function handleIssueUpdate(
         event: "issue.assigned",
         detail: `Assigned to issue ${issueLabel}`,
         issueId,
+        issueLabel,
         linearUserId: newAssignee,
       });
     } else {
@@ -117,6 +119,7 @@ function handleIssueUpdate(
         event: "issue.unassigned",
         detail: `Unassigned from issue ${issueLabel}`,
         issueId,
+        issueLabel,
         linearUserId: oldAssignee,
       });
     } else {
@@ -136,6 +139,7 @@ function handleIssueUpdate(
         event: "issue.reassigned",
         detail: `Reassigned away from issue ${issueLabel}`,
         issueId,
+        issueLabel,
         linearUserId: oldAssignee,
       });
     }
@@ -170,6 +174,7 @@ function handleComment(
         event: "comment.mention",
         detail: `Mentioned in comment on issue ${issueLabel}\n\n> ${body}`,
         issueId,
+        issueLabel,
         linearUserId: userId,
       });
     } else {

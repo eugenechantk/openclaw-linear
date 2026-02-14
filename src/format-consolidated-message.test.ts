@@ -9,6 +9,7 @@ function makeAction(overrides: Partial<RouterAction> = {}): RouterAction {
     event: "issue.assigned",
     detail: "Assigned to issue ENG-42: Fix login bug",
     issueId: "issue-42",
+    issueLabel: "ENG-42: Fix login bug",
     linearUserId: "user-1",
     ...overrides,
   };
@@ -22,8 +23,8 @@ describe("formatConsolidatedMessage", () => {
 
   it("formats multiple assigned actions as a numbered list", () => {
     const actions = [
-      makeAction({ detail: "Assigned to issue ENG-42: Fix login bug", issueId: "issue-42" }),
-      makeAction({ detail: "Assigned to issue ENG-43: Update API docs", issueId: "issue-43" }),
+      makeAction({ detail: "Assigned to issue ENG-42: Fix login bug", issueId: "issue-42", issueLabel: "ENG-42: Fix login bug" }),
+      makeAction({ detail: "Assigned to issue ENG-43: Update API docs", issueId: "issue-43", issueLabel: "ENG-43: Update API docs" }),
     ];
 
     const result = formatConsolidatedMessage(actions);
@@ -41,6 +42,7 @@ describe("formatConsolidatedMessage", () => {
         event: "comment.mention",
         detail: "Mentioned in comment on issue ENG-40: Auth flow\n\n> Can you review the auth flow?",
         issueId: "issue-40",
+        issueLabel: "ENG-40: Auth flow",
       }),
     ];
 
@@ -52,9 +54,9 @@ describe("formatConsolidatedMessage", () => {
 
   it("handles mixed event types", () => {
     const actions = [
-      makeAction({ event: "issue.assigned", detail: "Assigned to issue ENG-42: Fix login bug" }),
-      makeAction({ event: "issue.unassigned", detail: "Unassigned from issue ENG-50: Old task" }),
-      makeAction({ event: "issue.reassigned", detail: "Reassigned away from issue ENG-51: Moved task" }),
+      makeAction({ event: "issue.assigned", detail: "Assigned to issue ENG-42: Fix login bug", issueLabel: "ENG-42: Fix login bug" }),
+      makeAction({ event: "issue.unassigned", detail: "Unassigned from issue ENG-50: Old task", issueLabel: "ENG-50: Old task" }),
+      makeAction({ event: "issue.reassigned", detail: "Reassigned away from issue ENG-51: Moved task", issueLabel: "ENG-51: Moved task" }),
     ];
 
     const result = formatConsolidatedMessage(actions);
@@ -67,8 +69,8 @@ describe("formatConsolidatedMessage", () => {
 
   it("handles actions without identifier (uses issue id)", () => {
     const actions = [
-      makeAction({ detail: "Assigned to issue some-uuid" }),
-      makeAction({ detail: "Assigned to issue another-uuid" }),
+      makeAction({ detail: "Assigned to issue some-uuid", issueLabel: "some-uuid" }),
+      makeAction({ detail: "Assigned to issue another-uuid", issueLabel: "another-uuid" }),
     ];
 
     const result = formatConsolidatedMessage(actions);
@@ -79,14 +81,14 @@ describe("formatConsolidatedMessage", () => {
 
   it("falls back to raw event name for unknown event types", () => {
     const actions = [
-      makeAction({ event: "issue.assigned", detail: "Assigned to issue ENG-1: A" }),
-      makeAction({ event: "custom.event" as string, detail: "Something happened" }),
+      makeAction({ event: "issue.assigned", detail: "Assigned to issue ENG-1: A", issueLabel: "ENG-1: A" }),
+      makeAction({ event: "custom.event" as string, detail: "Something happened", issueLabel: "ENG-2: B" }),
     ];
 
     const result = formatConsolidatedMessage(actions);
 
     expect(result).toContain("1. [Assigned] ENG-1: A");
-    expect(result).toContain("2. [custom.event] Something happened");
+    expect(result).toContain("2. [custom.event] ENG-2: B");
   });
 
   it("handles comment mention without quote body gracefully", () => {
@@ -95,14 +97,15 @@ describe("formatConsolidatedMessage", () => {
         event: "comment.mention",
         detail: "Mentioned in comment on issue ENG-40: Auth flow",
         issueId: "issue-40",
+        issueLabel: "ENG-40: Auth flow",
       }),
       makeAction({ detail: "Assigned to issue ENG-42: Fix login bug" }),
     ];
 
     const result = formatConsolidatedMessage(actions);
 
-    // Without the "\n\n> " separator, falls back to raw detail
-    expect(result).toContain("1. [Mentioned] Mentioned in comment on issue ENG-40: Auth flow");
+    // Without the "\n\n> " separator, falls back to issueLabel
+    expect(result).toContain("1. [Mentioned] ENG-40: Auth flow");
     expect(result).toContain("2. [Assigned] ENG-42: Fix login bug");
   });
 });

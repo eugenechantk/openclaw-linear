@@ -41,6 +41,7 @@ describe("event-router", () => {
           event: "issue.assigned",
           detail: "Assigned to issue issue-123",
           issueId: "issue-123",
+          issueLabel: "issue-123",
           linearUserId: "user-1",
         },
       ]);
@@ -64,6 +65,7 @@ describe("event-router", () => {
 
       const actions = route(event);
       expect(actions[0].detail).toBe("Assigned to issue ENG-42: Fix login bug");
+      expect(actions[0].issueLabel).toBe("ENG-42: Fix login bug");
     });
 
     it("routes unassignment as notify event", () => {
@@ -88,6 +90,7 @@ describe("event-router", () => {
           event: "issue.unassigned",
           detail: "Unassigned from issue issue-456",
           issueId: "issue-456",
+          issueLabel: "issue-456",
           linearUserId: "user-2",
         },
       ]);

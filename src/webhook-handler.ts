@@ -21,27 +21,6 @@ const MAX_BODY_BYTES = 1024 * 1024; // 1 MB
 const DEDUP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const DEDUP_MAX_SIZE = 10_000;
 
-/** Map of delivery ID → timestamp for duplicate detection with TTL. */
-const processedDeliveries = new Map<string, number>();
-
-function pruneDeliveries(): void {
-  const now = Date.now();
-  for (const [id, ts] of processedDeliveries) {
-    if (now - ts > DEDUP_TTL_MS) {
-      processedDeliveries.delete(id);
-    }
-  }
-  // Hard cap: if still too large, drop the oldest entries
-  if (processedDeliveries.size > DEDUP_MAX_SIZE) {
-    const excess = processedDeliveries.size - DEDUP_MAX_SIZE;
-    const iter = processedDeliveries.keys();
-    for (let i = 0; i < excess; i++) {
-      const key = iter.next().value;
-      if (key !== undefined) processedDeliveries.delete(key);
-    }
-  }
-}
-
 function verifySignature(body: string, signature: string, secret: string): boolean {
   const expected = createHmac("sha256", secret).update(body).digest("hex");
   if (expected.length !== signature.length) {
@@ -69,6 +48,26 @@ function readBody(req: IncomingMessage): Promise<string> {
 }
 
 export function createWebhookHandler(deps: WebhookHandlerDeps) {
+  /** Map of delivery ID → timestamp for duplicate detection with TTL. */
+  const processedDeliveries = new Map<string, number>();
+
+  function pruneDeliveries(): void {
+    const now = Date.now();
+    for (const [id, ts] of processedDeliveries) {
+      if (now - ts > DEDUP_TTL_MS) {
+        processedDeliveries.delete(id);
+      }
+    }
+    if (processedDeliveries.size > DEDUP_MAX_SIZE) {
+      const excess = processedDeliveries.size - DEDUP_MAX_SIZE;
+      const iter = processedDeliveries.keys();
+      for (let i = 0; i < excess; i++) {
+        const key = iter.next().value;
+        if (key !== undefined) processedDeliveries.delete(key);
+      }
+    }
+  }
+
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (req.method !== "POST") {
       res.writeHead(405, { Allow: "POST" });

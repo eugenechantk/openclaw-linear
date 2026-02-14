@@ -27,27 +27,15 @@ export function formatConsolidatedMessage(actions: RouterAction[]): string {
 }
 
 function formatActionSummary(action: RouterAction): string {
-  switch (action.event) {
-    case "comment.mention": {
-      // detail format: "Mentioned in comment on issue LABEL\n\n> body"
-      const bodyStart = action.detail.indexOf("\n\n> ");
-      if (bodyStart !== -1) {
-        const issueInfo = action.detail.slice("Mentioned in comment on issue ".length, bodyStart);
-        const quote = action.detail.slice(bodyStart + 4); // skip "\n\n> "
-        return `${issueInfo}: "${quote}"`;
-      }
-      return action.detail;
+  if (action.event === "comment.mention") {
+    const bodyStart = action.detail.indexOf("\n\n> ");
+    if (bodyStart !== -1) {
+      const quote = action.detail.slice(bodyStart + 4); // skip "\n\n> "
+      return `${action.issueLabel}: "${quote}"`;
     }
-    case "issue.assigned":
-      // detail format: "Assigned to issue LABEL"
-      return action.detail.slice("Assigned to issue ".length);
-    case "issue.unassigned":
-      return action.detail.slice("Unassigned from issue ".length);
-    case "issue.reassigned":
-      return action.detail.slice("Reassigned away from issue ".length);
-    default:
-      return action.detail;
   }
+
+  return action.issueLabel || action.detail;
 }
 
 async function dispatchConsolidatedActions(
@@ -107,70 +95,92 @@ async function dispatchConsolidatedActions(
   });
 }
 
+let activeDebouncer: { flushKey: (key: string) => Promise<void> } | undefined;
+const activeDebouncerKeys = new Set<string>();
+
 export function activate(api: OpenClawPluginApi): void {
   api.logger.info("Linear plugin activated");
 
   const webhookSecret = api.pluginConfig?.["webhookSecret"];
-  if (typeof webhookSecret === "string" && webhookSecret) {
-    const agentMapping =
-      (api.pluginConfig?.["agentMapping"] as Record<string, string>) ?? {};
-    const eventFilter =
-      (api.pluginConfig?.["eventFilter"] as string[]) ?? [];
-    const teamIds =
-      (api.pluginConfig?.["teamIds"] as string[]) ?? [];
-    const debounceMs =
-      (api.pluginConfig?.["debounceMs"] as number | undefined) ?? DEFAULT_DEBOUNCE_MS;
-
-    const route = createEventRouter({
-      agentMapping,
-      logger: api.logger,
-      eventFilter: eventFilter.length ? eventFilter : undefined,
-      teamIds: teamIds.length ? teamIds : undefined,
-    });
-
-    const debouncer = api.runtime.channel.debounce.createInboundDebouncer<RouterAction>({
-      debounceMs,
-      buildKey: (action) => action.agentId,
-      shouldDebounce: () => true,
-      onFlush: async (actions) => {
-        await dispatchConsolidatedActions(actions, api);
-      },
-      onError: (err) => {
-        api.logger.error(
-          `[linear] Debounce flush failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      },
-    });
-
-    const handler = createWebhookHandler({
-      webhookSecret,
-      logger: api.logger,
-      onEvent: (event) => {
-        const actions = route(event);
-        for (const action of actions) {
-          api.logger.info(
-            `[event-router] ${action.type} agent=${action.agentId} event=${action.event}: ${action.detail}`,
-          );
-
-          if (action.type === "wake") {
-            debouncer.enqueue(action);
-          }
-        }
-      },
-    });
-
-    api.registerHttpRoute({
-      path: "/hooks/linear",
-      handler,
-    });
-
-    api.logger.info(
-      `Linear webhook handler registered at /hooks/linear (debounce: ${debounceMs}ms)`,
-    );
+  if (typeof webhookSecret !== "string" || !webhookSecret) {
+    api.logger.error("[linear] webhookSecret is not configured — plugin is inert");
+    return;
   }
+
+  const agentMapping =
+    (api.pluginConfig?.["agentMapping"] as Record<string, string>) ?? {};
+  if (Object.keys(agentMapping).length === 0) {
+    api.logger.info("[linear] agentMapping is empty — all events will be dropped");
+  }
+
+  const eventFilter =
+    (api.pluginConfig?.["eventFilter"] as string[]) ?? [];
+  const teamIds =
+    (api.pluginConfig?.["teamIds"] as string[]) ?? [];
+  const rawDebounceMs = api.pluginConfig?.["debounceMs"] as number | undefined;
+  const debounceMs =
+    (typeof rawDebounceMs === "number" && rawDebounceMs > 0)
+      ? rawDebounceMs
+      : DEFAULT_DEBOUNCE_MS;
+
+  const route = createEventRouter({
+    agentMapping,
+    logger: api.logger,
+    eventFilter: eventFilter.length ? eventFilter : undefined,
+    teamIds: teamIds.length ? teamIds : undefined,
+  });
+
+  const debouncer = api.runtime.channel.debounce.createInboundDebouncer<RouterAction>({
+    debounceMs,
+    buildKey: (action) => action.agentId,
+    shouldDebounce: () => true,
+    onFlush: async (actions) => {
+      await dispatchConsolidatedActions(actions, api);
+    },
+    onError: (err) => {
+      api.logger.error(
+        `[linear] Debounce flush failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    },
+  });
+  activeDebouncer = debouncer;
+
+  const handler = createWebhookHandler({
+    webhookSecret,
+    logger: api.logger,
+    onEvent: (event) => {
+      const actions = route(event);
+      for (const action of actions) {
+        api.logger.info(
+          `[event-router] ${action.type} agent=${action.agentId} event=${action.event}: ${action.detail}`,
+        );
+
+        if (action.type === "wake") {
+          activeDebouncerKeys.add(action.agentId);
+          debouncer.enqueue(action);
+        }
+      }
+    },
+  });
+
+  api.registerHttpRoute({
+    path: "/hooks/linear",
+    handler,
+  });
+
+  api.logger.info(
+    `Linear webhook handler registered at /hooks/linear (debounce: ${debounceMs}ms)`,
+  );
 }
 
-export function deactivate(api: OpenClawPluginApi): void {
+export async function deactivate(api: OpenClawPluginApi): Promise<void> {
+  if (activeDebouncer) {
+    for (const key of activeDebouncerKeys) {
+      await activeDebouncer.flushKey(key);
+    }
+    activeDebouncerKeys.clear();
+    activeDebouncer = undefined;
+  }
   api.logger.info("Linear plugin deactivated");
 }
 
@@ -179,11 +189,13 @@ const plugin = {
   name: "Linear",
   description: "Linear project management integration for OpenClaw",
   activate,
+  deactivate,
 } satisfies {
   id: string;
   name: string;
   description: string;
   activate: (api: OpenClawPluginApi) => void;
+  deactivate: (api: OpenClawPluginApi) => Promise<void>;
 };
 
 export default plugin;
