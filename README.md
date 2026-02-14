@@ -29,6 +29,7 @@ plugins:
     agentMapping:                     # Map Linear user IDs → OpenClaw agent IDs
       "linear-user-uuid-1": "titus"
       "linear-user-uuid-2": "scout"
+    debounceMs: 30000                 # Optional: batch window for webhook events (default: 30000)
 ```
 
 ### Config Fields
@@ -40,6 +41,7 @@ plugins:
 | `teamIds` | string[] | No | Team keys to scope webhook processing. Empty array = all teams. |
 | `eventFilter` | string[] | No | Event types to handle (`Issue`, `Comment`, etc.). Empty = all. |
 | `agentMapping` | object | No | Maps Linear user UUIDs to OpenClaw agent IDs for notification routing. |
+| `debounceMs` | integer | No | Debounce window in milliseconds for batching webhook events before dispatch. When multiple events arrive within this window, they are consolidated into a single message so the agent can triage before acting. Default: `30000` (30s). |
 
 ## Webhook Setup
 

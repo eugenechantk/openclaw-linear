@@ -9,14 +9,64 @@ import { registerUpdateIssueTool } from "./tools/update-issue.js";
 import { registerAddCommentTool } from "./tools/add-comment.js";
 
 const CHANNEL_ID = "linear";
+const DEFAULT_DEBOUNCE_MS = 30_000;
 
-async function dispatchAction(
-  action: RouterAction,
+const EVENT_LABELS: Record<string, string> = {
+  "issue.assigned": "Assigned",
+  "issue.unassigned": "Unassigned",
+  "issue.reassigned": "Reassigned",
+  "comment.mention": "Mentioned",
+};
+
+export function formatConsolidatedMessage(actions: RouterAction[]): string {
+  if (actions.length === 1) {
+    return actions[0].detail;
+  }
+
+  const lines = actions.map((a, i) => {
+    const label = EVENT_LABELS[a.event] ?? a.event;
+    const summary = formatActionSummary(a);
+    return `${i + 1}. [${label}] ${summary}`;
+  });
+
+  return `You have ${actions.length} new Linear notifications:\n\n${lines.join("\n")}\n\nReview and prioritize before starting work.`;
+}
+
+function formatActionSummary(action: RouterAction): string {
+  switch (action.event) {
+    case "comment.mention": {
+      // detail format: "Mentioned in comment on issue LABEL\n\n> body"
+      const bodyStart = action.detail.indexOf("\n\n> ");
+      if (bodyStart !== -1) {
+        const issueInfo = action.detail.slice("Mentioned in comment on issue ".length, bodyStart);
+        const quote = action.detail.slice(bodyStart + 4); // skip "\n\n> "
+        return `${issueInfo}: "${quote}"`;
+      }
+      return action.detail;
+    }
+    case "issue.assigned":
+      // detail format: "Assigned to issue LABEL"
+      return action.detail.slice("Assigned to issue ".length);
+    case "issue.unassigned":
+      return action.detail.slice("Unassigned from issue ".length);
+    case "issue.reassigned":
+      return action.detail.slice("Reassigned away from issue ".length);
+    default:
+      return action.detail;
+  }
+}
+
+async function dispatchConsolidatedActions(
+  actions: RouterAction[],
   api: OpenClawPluginApi,
   linearClient?: LinearClient,
 ): Promise<void> {
+  if (actions.length === 0) return;
+
   const core = api.runtime;
   const cfg = api.config;
+
+  const first = actions[0];
 
   const route = core.channel.routing.resolveAgentRoute({
     cfg,
@@ -24,48 +74,36 @@ async function dispatchAction(
     accountId: "default",
     peer: {
       kind: "direct" as const,
-      id: action.linearUserId,
+      id: first.linearUserId,
     },
   });
 
-  const body = action.detail;
+  const body = formatConsolidatedMessage(actions);
 
   const ctx = core.channel.reply.finalizeInboundContext({
     Body: body,
     BodyForAgent: body,
     RawBody: body,
     CommandBody: body,
-    From: `${CHANNEL_ID}:${action.linearUserId}`,
-    To: `${CHANNEL_ID}:${route.agentId ?? action.agentId}`,
+    From: `${CHANNEL_ID}:${first.linearUserId}`,
+    To: `${CHANNEL_ID}:${route.agentId ?? first.agentId}`,
     SessionKey: route.sessionKey,
     AccountId: route.accountId ?? "default",
     ChatType: "direct",
-    ConversationLabel: `Linear: ${action.event} (${action.issueId})`,
-    SenderId: action.linearUserId,
+    ConversationLabel: `Linear: batch (${actions.length} events)`,
+    SenderId: first.linearUserId,
     Provider: CHANNEL_ID,
     Surface: CHANNEL_ID,
     OriginatingChannel: CHANNEL_ID,
-    OriginatingTo: `${CHANNEL_ID}:${action.linearUserId}`,
+    OriginatingTo: `${CHANNEL_ID}:${first.linearUserId}`,
   });
 
   await core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
     ctx,
     cfg,
     dispatcherOptions: {
-      deliver: async (payload) => {
-        const rp = payload as { text?: string };
-        if (linearClient && rp.text && action.issueId !== "unknown") {
-          try {
-            await linearClient.createComment({
-              issueId: action.issueId,
-              body: rp.text,
-            });
-          } catch (err) {
-            api.logger.error(
-              `[linear] Failed to post reply comment: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }
-        }
+      deliver: async () => {
+        // No-op: agent uses Linear tools to respond to specific issues after triage
       },
       onError: (err: unknown) => {
         api.logger.error(
@@ -99,12 +137,28 @@ export function activate(api: OpenClawPluginApi): void {
       (api.pluginConfig?.["eventFilter"] as string[]) ?? [];
     const teamIds =
       (api.pluginConfig?.["teamIds"] as string[]) ?? [];
+    const debounceMs =
+      (api.pluginConfig?.["debounceMs"] as number | undefined) ?? DEFAULT_DEBOUNCE_MS;
 
     const route = createEventRouter({
       agentMapping,
       logger: api.logger,
       eventFilter: eventFilter.length ? eventFilter : undefined,
       teamIds: teamIds.length ? teamIds : undefined,
+    });
+
+    const debouncer = api.runtime.channel.debounce.createInboundDebouncer<RouterAction>({
+      debounceMs,
+      buildKey: (action) => action.agentId,
+      shouldDebounce: () => true,
+      onFlush: async (actions) => {
+        await dispatchConsolidatedActions(actions, api, linearClient);
+      },
+      onError: (err) => {
+        api.logger.error(
+          `[linear] Debounce flush failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      },
     });
 
     const handler = createWebhookHandler({
@@ -118,11 +172,7 @@ export function activate(api: OpenClawPluginApi): void {
           );
 
           if (action.type === "wake") {
-            dispatchAction(action, api, linearClient).catch((err) => {
-              api.logger.error(
-                `[linear] Dispatch failed for ${action.event} → ${action.agentId}: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            });
+            debouncer.enqueue(action);
           }
         }
       },
@@ -133,7 +183,9 @@ export function activate(api: OpenClawPluginApi): void {
       handler,
     });
 
-    api.logger.info("Linear webhook handler registered at /hooks/linear");
+    api.logger.info(
+      `Linear webhook handler registered at /hooks/linear (debounce: ${debounceMs}ms)`,
+    );
   }
 }
 
