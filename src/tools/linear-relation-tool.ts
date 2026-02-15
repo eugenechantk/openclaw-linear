@@ -1,7 +1,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
 import { jsonResult } from "openclaw/plugin-sdk";
-import { graphql, resolveIssueId } from "./linear-api.js";
+import { graphql, resolveIssueId } from "../linear-api.js";
 
 const RELATION_TYPE_MAP: Record<string, string> = {
   blocks: "blocks",

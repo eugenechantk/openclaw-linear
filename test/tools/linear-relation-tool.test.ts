@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../src/linear-api.js", () => ({
+vi.mock("../../src/linear-api.js", () => ({
   graphql: vi.fn(),
   resolveIssueId: vi.fn(),
 }));
 
-const { graphql, resolveIssueId } = await import("../src/linear-api.js");
-const { createRelationTool } = await import("../src/linear-relation-tool.js");
+const { graphql, resolveIssueId } = await import("../../src/linear-api.js");
+const { createRelationTool } = await import("../../src/tools/linear-relation-tool.js");
 
 const mockedGraphql = vi.mocked(graphql);
 const mockedResolveIssueId = vi.mocked(resolveIssueId);

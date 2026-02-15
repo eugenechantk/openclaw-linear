@@ -9,7 +9,7 @@ import {
   resolveUserId,
   resolveLabelIds,
   resolveProjectId,
-} from "./linear-api.js";
+} from "../linear-api.js";
 
 const Params = Type.Object({
   action: Type.Unsafe<"view" | "list" | "create" | "update" | "delete">({

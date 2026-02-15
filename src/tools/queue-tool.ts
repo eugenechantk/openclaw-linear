@@ -1,7 +1,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
 import { jsonResult } from "openclaw/plugin-sdk";
-import type { InboxQueue } from "./work-queue.js";
+import type { InboxQueue } from "../work-queue.js";
 
 const QueueAction = Type.Unsafe<"peek" | "pop" | "drain" | "complete">({
   type: "string",

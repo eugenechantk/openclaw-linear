@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../src/linear-api.js", () => ({
+vi.mock("../../src/linear-api.js", () => ({
   graphql: vi.fn(),
 }));
 
-const { graphql } = await import("../src/linear-api.js");
-const { createTeamTool } = await import("../src/linear-team-tool.js");
+const { graphql } = await import("../../src/linear-api.js");
+const { createTeamTool } = await import("../../src/tools/linear-team-tool.js");
 
 const mockedGraphql = vi.mocked(graphql);
 

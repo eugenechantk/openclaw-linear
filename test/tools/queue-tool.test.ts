@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { InboxQueue, type EnqueueEntry } from "../src/work-queue.js";
-import { createQueueTool } from "../src/queue-tool.js";
+import { InboxQueue, type EnqueueEntry } from "../../src/work-queue.js";
+import { createQueueTool } from "../../src/tools/queue-tool.js";
 
-const TMP_DIR = join(import.meta.dirname ?? __dirname, "../.test-tmp-tool");
+const TMP_DIR = join(import.meta.dirname ?? __dirname, "../../.test-tmp-tool");
 const QUEUE_PATH = join(TMP_DIR, "queue", "inbox.jsonl");
 
 function parse(result: { content: { type: string; text?: string }[] }) {

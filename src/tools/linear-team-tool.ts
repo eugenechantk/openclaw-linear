@@ -1,7 +1,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
 import { jsonResult } from "openclaw/plugin-sdk";
-import { graphql } from "./linear-api.js";
+import { graphql } from "../linear-api.js";
 
 const Params = Type.Object({
   action: Type.Unsafe<"list" | "members">({
