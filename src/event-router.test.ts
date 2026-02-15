@@ -42,6 +42,8 @@ describe("event-router", () => {
           detail: "Assigned to issue issue-123",
           issueId: "issue-123",
           issueLabel: "issue-123",
+          identifier: "issue-123",
+          issuePriority: 0,
           linearUserId: "user-1",
         },
       ]);
@@ -66,6 +68,8 @@ describe("event-router", () => {
       const actions = route(event);
       expect(actions[0].detail).toBe("Assigned to issue ENG-42: Fix login bug");
       expect(actions[0].issueLabel).toBe("ENG-42: Fix login bug");
+      expect(actions[0].identifier).toBe("ENG-42");
+      expect(actions[0].issuePriority).toBe(0);
     });
 
     it("routes unassignment as notify event", () => {
@@ -91,6 +95,8 @@ describe("event-router", () => {
           detail: "Unassigned from issue issue-456",
           issueId: "issue-456",
           issueLabel: "issue-456",
+          identifier: "issue-456",
+          issuePriority: 0,
           linearUserId: "user-2",
         },
       ]);
@@ -118,6 +124,8 @@ describe("event-router", () => {
         type: "wake",
         agentId: "agent-1",
         event: "issue.assigned",
+        identifier: "issue-789",
+        issuePriority: 0,
         linearUserId: "user-1",
       });
 
@@ -126,6 +134,8 @@ describe("event-router", () => {
         type: "notify",
         agentId: "agent-2",
         event: "issue.reassigned",
+        identifier: "issue-789",
+        issuePriority: 0,
         linearUserId: "user-2",
       });
     });
@@ -153,6 +163,8 @@ describe("event-router", () => {
         agentId: "agent-1",
         event: "comment.mention",
         issueId: "issue-789",
+        identifier: "issue-789",
+        issuePriority: 0,
         linearUserId: "user-1",
       });
       expect(actions[0].detail).toContain("Mentioned in comment on issue");

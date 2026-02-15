@@ -10,6 +10,8 @@ function makeAction(overrides: Partial<RouterAction> = {}): RouterAction {
     detail: "Assigned to issue ENG-42: Fix login bug",
     issueId: "issue-42",
     issueLabel: "ENG-42: Fix login bug",
+    identifier: "ENG-42",
+    issuePriority: 0,
     linearUserId: "user-1",
     ...overrides,
   };

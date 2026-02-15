@@ -1,7 +1,7 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { createWebhookHandler } from "./webhook-handler.js";
 import { createEventRouter, type RouterAction } from "./event-router.js";
-import { InboxQueue } from "./work-queue.js";
+import { InboxQueue, type EnqueueEntry } from "./work-queue.js";
 import { createQueueTool } from "./queue-tool.js";
 
 const CHANNEL_ID = "linear";
@@ -63,8 +63,13 @@ async function dispatchConsolidatedActions(
   });
 
   // Write to queue deterministically — no LLM involved
-  const rawBody = formatConsolidatedMessage(actions);
-  const added = await queue.enqueue(rawBody);
+  const entries: EnqueueEntry[] = actions.map((a) => ({
+    id: a.identifier,
+    event: a.event,
+    summary: a.issueLabel,
+    issuePriority: a.issuePriority,
+  }));
+  const added = await queue.enqueue(entries);
 
   if (added === 0) {
     api.logger.info("[linear] All notifications deduped — skipping agent dispatch");

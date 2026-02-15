@@ -6,6 +6,7 @@ import {
   InboxQueue,
   QUEUE_EVENT,
   type QueueItem,
+  type EnqueueEntry,
 } from "./work-queue.js";
 
 const TMP_DIR = join(import.meta.dirname ?? __dirname, "../.test-tmp");
@@ -21,6 +22,15 @@ function readItems(): QueueItem[] {
   } catch {
     return [];
   }
+}
+
+function entry(
+  id: string,
+  event: string,
+  summary: string,
+  issuePriority = 0,
+): EnqueueEntry {
+  return { id, event, summary, issuePriority };
 }
 
 beforeEach(() => {
@@ -99,9 +109,11 @@ describe("parseNotificationMessage", () => {
 // --- InboxQueue.enqueue ---
 
 describe("InboxQueue.enqueue", () => {
-  it("adds parsed items to empty queue", async () => {
+  it("adds items to empty queue with issue priority", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    const added = await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
+    const added = await queue.enqueue([
+      entry("ENG-42", "issue.assigned", "Fix login bug", 1),
+    ]);
     expect(added).toBe(1);
     const items = readItems();
     expect(items).toHaveLength(1);
@@ -113,19 +125,31 @@ describe("InboxQueue.enqueue", () => {
     });
   });
 
+  it("maps no-priority (0) to sort last", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([
+      entry("ENG-1", "issue.assigned", "No priority task", 0),
+      entry("ENG-2", "issue.assigned", "Low priority task", 4),
+    ]);
+    const items = await queue.peek();
+    expect(items[0].id).toBe("ENG-2");
+    expect(items[0].priority).toBe(4);
+    expect(items[1].id).toBe("ENG-1");
+    expect(items[1].priority).toBe(5);
+  });
+
   it("deduplicates against existing items", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
-    const added = await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
+    const added = await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
     expect(added).toBe(0);
     expect(readItems()).toHaveLength(1);
   });
 
   it("allows same issue with different queue events", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
-    const msg = "Mentioned in comment on issue ENG-42: Fix login bug\n\n> thoughts?";
-    const added = await queue.enqueue(msg);
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
+    const added = await queue.enqueue([entry("ENG-42", "comment.mention", "Fix login bug", 2)]);
     expect(added).toBe(1);
     const items = readItems();
     expect(items).toHaveLength(2);
@@ -134,42 +158,29 @@ describe("InboxQueue.enqueue", () => {
 
   it("deduplicates within the same batch", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    const message = [
-      "You have 2 new Linear notifications:",
-      "",
-      "1. [Assigned] ENG-42: Fix login bug",
-      "2. [Assigned] ENG-42: Fix login bug",
-      "",
-      "Review and prioritize before starting work.",
-    ].join("\n");
-
-    const added = await queue.enqueue(message);
+    const added = await queue.enqueue([
+      entry("ENG-42", "issue.assigned", "Fix login bug", 2),
+      entry("ENG-42", "issue.assigned", "Fix login bug", 2),
+    ]);
     expect(added).toBe(1);
   });
 
-  it("returns 0 for unrecognized message", async () => {
+  it("returns 0 for empty entries", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    expect(await queue.enqueue("Hello world")).toBe(0);
+    expect(await queue.enqueue([])).toBe(0);
   });
 
-  it("enqueues multiple items with correct priorities", async () => {
+  it("uses issue priority for queue ordering", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    const message = [
-      "You have 3 new Linear notifications:",
-      "",
-      '1. [Mentioned] ENG-10: "hey"',
-      "2. [Assigned] ENG-11: urgent fix",
-      "3. [Reassigned] ENG-12: old task",
-      "",
-      "Review and prioritize before starting work.",
-    ].join("\n");
-
-    await queue.enqueue(message);
+    await queue.enqueue([
+      entry("ENG-10", "comment.mention", "hey", 3),
+      entry("ENG-11", "issue.assigned", "urgent fix", 1),
+      entry("ENG-12", "issue.reassigned", "medium task", 3),
+    ]);
     const items = readItems();
     expect(items).toHaveLength(3);
-    // mention=2, ticket=1, ticket=1
     expect(items.map((i) => i.event)).toEqual(["mention", "ticket", "ticket"]);
-    expect(items.map((i) => i.priority)).toEqual([2, 1, 1]);
+    expect(items.map((i) => i.priority)).toEqual([3, 1, 3]);
   });
 });
 
@@ -183,26 +194,20 @@ describe("InboxQueue.peek", () => {
 
   it("returns items sorted by priority", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    const message = [
-      "You have 3 new Linear notifications:",
-      "",
-      '1. [Mentioned] ENG-10: "hey"',
-      "2. [Assigned] ENG-11: urgent fix",
-      "3. [Reassigned] ENG-12: old task",
-      "",
-      "Review and prioritize before starting work.",
-    ].join("\n");
-    await queue.enqueue(message);
+    await queue.enqueue([
+      entry("ENG-10", "comment.mention", "hey", 4),
+      entry("ENG-11", "issue.assigned", "urgent fix", 1),
+      entry("ENG-12", "issue.reassigned", "medium task", 3),
+    ]);
 
     const items = await queue.peek();
-    // Both assigned and reassigned map to ticket (priority 1), mention is priority 2
     expect(items.map((i) => i.id)).toEqual(["ENG-11", "ENG-12", "ENG-10"]);
-    expect(items.map((i) => i.priority)).toEqual([1, 1, 2]);
+    expect(items.map((i) => i.priority)).toEqual([1, 3, 4]);
   });
 
   it("does not remove items", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
     await queue.peek();
     await queue.peek();
     expect(readItems()).toHaveLength(1);
@@ -219,15 +224,10 @@ describe("InboxQueue.pop", () => {
 
   it("removes and returns highest-priority item", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    const message = [
-      "You have 2 new Linear notifications:",
-      "",
-      '1. [Mentioned] ENG-10: "hey"',
-      "2. [Assigned] ENG-11: urgent fix",
-      "",
-      "Review and prioritize before starting work.",
-    ].join("\n");
-    await queue.enqueue(message);
+    await queue.enqueue([
+      entry("ENG-10", "comment.mention", "hey", 4),
+      entry("ENG-11", "issue.assigned", "urgent fix", 1),
+    ]);
 
     const item = await queue.pop();
     expect(item!.id).toBe("ENG-11");
@@ -243,16 +243,11 @@ describe("InboxQueue.pop", () => {
 
   it("returns items in priority order across multiple pops", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    const message = [
-      "You have 3 new Linear notifications:",
-      "",
-      '1. [Mentioned] ENG-10: "hey"',
-      "2. [Assigned] ENG-11: urgent fix",
-      "3. [Reassigned] ENG-12: old task",
-      "",
-      "Review and prioritize before starting work.",
-    ].join("\n");
-    await queue.enqueue(message);
+    await queue.enqueue([
+      entry("ENG-10", "comment.mention", "hey", 4),
+      entry("ENG-11", "issue.assigned", "urgent fix", 1),
+      entry("ENG-12", "issue.reassigned", "medium task", 3),
+    ]);
 
     expect((await queue.pop())!.id).toBe("ENG-11");
     expect((await queue.pop())!.id).toBe("ENG-12");
@@ -271,15 +266,10 @@ describe("InboxQueue.drain", () => {
 
   it("removes and returns all items sorted by priority", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    const message = [
-      "You have 2 new Linear notifications:",
-      "",
-      '1. [Mentioned] ENG-10: "hey"',
-      "2. [Assigned] ENG-11: urgent fix",
-      "",
-      "Review and prioritize before starting work.",
-    ].join("\n");
-    await queue.enqueue(message);
+    await queue.enqueue([
+      entry("ENG-10", "comment.mention", "hey", 4),
+      entry("ENG-11", "issue.assigned", "urgent fix", 1),
+    ]);
 
     const items = await queue.drain();
     expect(items.map((i) => i.id)).toEqual(["ENG-11", "ENG-10"]);
@@ -295,27 +285,27 @@ describe("InboxQueue.drain", () => {
 describe("InboxQueue unassign removal", () => {
   it("removes existing ticket for same issue", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
     expect(readItems()).toHaveLength(1);
 
-    const added = await queue.enqueue("Unassigned from issue ENG-42: Fix login bug");
+    const added = await queue.enqueue([entry("ENG-42", "issue.unassigned", "Fix login bug", 2)]);
     expect(added).toBe(0);
     expect(readItems()).toHaveLength(0);
   });
 
   it("is a no-op on empty queue", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    const added = await queue.enqueue("Unassigned from issue ENG-42: Fix login bug");
+    const added = await queue.enqueue([entry("ENG-42", "issue.unassigned", "Fix login bug", 2)]);
     expect(added).toBe(0);
     expect(readItems()).toHaveLength(0);
   });
 
   it("does not affect mention items for same issue", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    await queue.enqueue("Mentioned in comment on issue ENG-42: Fix login bug\n\n> hey");
+    await queue.enqueue([entry("ENG-42", "comment.mention", "hey", 2)]);
     expect(readItems()).toHaveLength(1);
 
-    await queue.enqueue("Unassigned from issue ENG-42: Fix login bug");
+    await queue.enqueue([entry("ENG-42", "issue.unassigned", "Fix login bug", 2)]);
     const items = readItems();
     expect(items).toHaveLength(1);
     expect(items[0].event).toBe("mention");
@@ -323,10 +313,12 @@ describe("InboxQueue unassign removal", () => {
 
   it("does not affect ticket items for different issues", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
-    await queue.enqueue("Assigned to issue ENG-43: Update docs");
+    await queue.enqueue([
+      entry("ENG-42", "issue.assigned", "Fix login bug", 2),
+      entry("ENG-43", "issue.assigned", "Update docs", 3),
+    ]);
 
-    await queue.enqueue("Unassigned from issue ENG-42: Fix login bug");
+    await queue.enqueue([entry("ENG-42", "issue.unassigned", "Fix login bug", 2)]);
     const items = readItems();
     expect(items).toHaveLength(1);
     expect(items[0].issueId).toBe("ENG-43");
@@ -338,8 +330,8 @@ describe("InboxQueue unassign removal", () => {
 describe("InboxQueue reassigned dedup", () => {
   it("deduplicates reassigned against existing ticket from assigned", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
-    const added = await queue.enqueue("Reassigned away from issue ENG-42: Fix login bug");
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
+    const added = await queue.enqueue([entry("ENG-42", "issue.reassigned", "Fix login bug", 2)]);
     expect(added).toBe(0);
     const items = readItems();
     expect(items).toHaveLength(1);
@@ -366,8 +358,8 @@ describe("InboxQueue mutex serialization", () => {
 
     // Fire two enqueues concurrently — both should complete without data loss
     const [a, b] = await Promise.all([
-      queue.enqueue("Assigned to issue ENG-1: Task one"),
-      queue.enqueue("Assigned to issue ENG-2: Task two"),
+      queue.enqueue([entry("ENG-1", "issue.assigned", "Task one", 2)]),
+      queue.enqueue([entry("ENG-2", "issue.assigned", "Task two", 3)]),
     ]);
 
     expect(a + b).toBe(2);
@@ -379,8 +371,8 @@ describe("InboxQueue mutex serialization", () => {
 
   it("serializes concurrent pop calls", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    await queue.enqueue("Assigned to issue ENG-1: Task one");
-    await queue.enqueue("Assigned to issue ENG-2: Task two");
+    await queue.enqueue([entry("ENG-1", "issue.assigned", "Task one", 2)]);
+    await queue.enqueue([entry("ENG-2", "issue.assigned", "Task two", 3)]);
 
     const [a, b] = await Promise.all([queue.pop(), queue.pop()]);
     const results = [a, b].filter(Boolean);

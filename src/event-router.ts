@@ -7,6 +7,8 @@ export type RouterAction = {
   detail: string;
   issueId: string;
   issueLabel: string;
+  identifier: string;
+  issuePriority: number;
   linearUserId: string;
 };
 
@@ -90,6 +92,8 @@ function handleIssueUpdate(
   };
   const issueId = String(event.data.id ?? "unknown");
   const issueLabel = resolveIssueLabel(event.data);
+  const identifier = (event.data.identifier as string) ?? issueId;
+  const issuePriority = (event.data.priority as number) ?? 0;
 
   if (newAssignee) {
     const agentId = config.agentMapping[newAssignee];
@@ -101,6 +105,8 @@ function handleIssueUpdate(
         detail: `Assigned to issue ${issueLabel}`,
         issueId,
         issueLabel,
+        identifier,
+        issuePriority,
         linearUserId: newAssignee,
       });
     } else {
@@ -120,6 +126,8 @@ function handleIssueUpdate(
         detail: `Unassigned from issue ${issueLabel}`,
         issueId,
         issueLabel,
+        identifier,
+        issuePriority,
         linearUserId: oldAssignee,
       });
     } else {
@@ -140,6 +148,8 @@ function handleIssueUpdate(
         detail: `Reassigned away from issue ${issueLabel}`,
         issueId,
         issueLabel,
+        identifier,
+        issuePriority,
         linearUserId: oldAssignee,
       });
     }
@@ -164,6 +174,8 @@ function handleComment(
   const issueLabel = issueRef
     ? resolveIssueLabel(issueRef)
     : issueId;
+  const identifier = (issueRef?.identifier as string) ?? issueId;
+  const issuePriority = (issueRef?.priority as number) ?? 0;
 
   for (const userId of mentionedIds) {
     const agentId = config.agentMapping[userId];
@@ -175,6 +187,8 @@ function handleComment(
         detail: `Mentioned in comment on issue ${issueLabel}\n\n> ${body}`,
         issueId,
         issueLabel,
+        identifier,
+        issuePriority,
         linearUserId: userId,
       });
     } else {

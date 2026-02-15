@@ -21,16 +21,23 @@ export interface QueueItem {
   addedAt: string;
 }
 
-export const EVENT_PRIORITY: Record<string, number> = {
-  "ticket": 1,
-  "mention": 2,
-};
-
 export const QUEUE_EVENT: Record<string, string> = {
   "issue.assigned": "ticket",
   "issue.reassigned": "ticket",
   "comment.mention": "mention",
 };
+
+export interface EnqueueEntry {
+  id: string;
+  event: string;
+  summary: string;
+  issuePriority: number;
+}
+
+/** Map Linear priority (0=none) so no-priority sorts last. */
+function mapPriority(linearPriority: number): number {
+  return linearPriority === 0 ? 5 : linearPriority;
+}
 
 // --- Parsing ---
 
@@ -214,10 +221,9 @@ export class InboxQueue {
 
   constructor(private readonly path: string) {}
 
-  /** Parse a notification message, dedup, and append new items. Returns count added. */
-  async enqueue(message: string): Promise<number> {
-    const parsed = parseNotificationMessage(message);
-    if (parsed.length === 0) return 0;
+  /** Dedup and append entries to the queue. Returns count added. */
+  async enqueue(entries: EnqueueEntry[]): Promise<number> {
+    if (entries.length === 0) return 0;
 
     const release = await this.mutex.acquire();
     try {
@@ -225,7 +231,7 @@ export class InboxQueue {
 
       // Handle unassign removals — remove existing ticket items for unassigned issues
       const unassignIds = new Set(
-        parsed
+        entries
           .filter((e) => e.event === "issue.unassigned")
           .map((e) => e.id),
       );
@@ -248,7 +254,7 @@ export class InboxQueue {
       const newItems: QueueItem[] = [];
       const now = new Date().toISOString();
 
-      for (const entry of parsed) {
+      for (const entry of entries) {
         const queueEvent = QUEUE_EVENT[entry.event];
         if (!queueEvent) continue; // skip unmapped events (e.g. issue.unassigned)
 
@@ -260,7 +266,7 @@ export class InboxQueue {
           issueId: entry.id,
           event: queueEvent,
           summary: entry.summary,
-          priority: EVENT_PRIORITY[queueEvent] ?? 5,
+          priority: mapPriority(entry.issuePriority),
           addedAt: now,
         });
         existingKeys.add(dedupKey);

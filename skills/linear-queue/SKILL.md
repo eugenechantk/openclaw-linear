@@ -31,10 +31,12 @@ You have a `linear_queue` tool for managing Linear notifications that need your 
 
 ## Event types and expected actions
 
-| Event | Priority | Action |
-|---|---|---|
-| `ticket` | 1 | You have a ticket to work on. Read issue details and begin work. |
-| `mention` | 2 | You were mentioned in a comment. Read and respond. |
+| Event | Action |
+|---|---|
+| `ticket` | You have a ticket to work on. Read issue details and begin work. |
+| `mention` | You were mentioned in a comment. Read and respond. |
+
+Priority is determined by the Linear issue's priority (1=Urgent, 2=High, 3=Medium, 4=Low, 5=None). Higher-priority items are popped first.
 
 ## Processing workflow
 
