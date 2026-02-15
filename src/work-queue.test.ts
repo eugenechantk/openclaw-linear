@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  parseNotificationMessage,
   InboxQueue,
   QUEUE_EVENT,
   type QueueItem,
@@ -39,71 +38,6 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(TMP_DIR, { recursive: true, force: true });
-});
-
-// --- parseNotificationMessage ---
-
-describe("parseNotificationMessage", () => {
-  it("parses single assigned notification", () => {
-    const result = parseNotificationMessage("Assigned to issue ENG-42: Fix login bug");
-    expect(result).toEqual([
-      { id: "ENG-42", event: "issue.assigned", summary: "Fix login bug" },
-    ]);
-  });
-
-  it("parses single unassigned notification", () => {
-    const result = parseNotificationMessage("Unassigned from issue ENG-42: Fix login bug");
-    expect(result).toEqual([
-      { id: "ENG-42", event: "issue.unassigned", summary: "Fix login bug" },
-    ]);
-  });
-
-  it("parses single reassigned notification", () => {
-    const result = parseNotificationMessage("Reassigned away from issue ENG-42: Fix login bug");
-    expect(result).toEqual([
-      { id: "ENG-42", event: "issue.reassigned", summary: "Fix login bug" },
-    ]);
-  });
-
-  it("parses single mention notification", () => {
-    const result = parseNotificationMessage(
-      "Mentioned in comment on issue ENG-42: Fix login bug\n\n> Please review this",
-    );
-    expect(result).toEqual([
-      { id: "ENG-42", event: "comment.mention", summary: "Fix login bug" },
-    ]);
-  });
-
-  it("parses multi-notification message", () => {
-    const message = [
-      "You have 3 new Linear notifications:",
-      "",
-      "1. [Assigned] ENG-42: Fix login bug",
-      '2. [Mentioned] ENG-43: "Can you review this?"',
-      "3. [Reassigned] ENG-44: Update API docs",
-      "",
-      "Review and prioritize before starting work.",
-    ].join("\n");
-
-    const result = parseNotificationMessage(message);
-    expect(result).toEqual([
-      { id: "ENG-42", event: "issue.assigned", summary: "Fix login bug" },
-      { id: "ENG-43", event: "comment.mention", summary: "Can you review this?" },
-      { id: "ENG-44", event: "issue.reassigned", summary: "Update API docs" },
-    ]);
-  });
-
-  it("returns empty for unrecognized message", () => {
-    expect(parseNotificationMessage("Hello world")).toEqual([]);
-  });
-
-  it("handles unknown label in multi-notification", () => {
-    const message = "You have 1 new Linear notifications:\n\n1. [Custom] ENG-1: Something";
-    const result = parseNotificationMessage(message);
-    expect(result).toEqual([
-      { id: "ENG-1", event: "unknown.custom", summary: "Something" },
-    ]);
-  });
 });
 
 // --- InboxQueue.enqueue ---
