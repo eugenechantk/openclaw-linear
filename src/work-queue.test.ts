@@ -243,20 +243,11 @@ describe("InboxQueue removal events", () => {
     expect(readItems()).toHaveLength(0);
   });
 
-  it("removes existing ticket on issue.completed", async () => {
+  it("removes existing ticket on issue.state_removed", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
     await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
 
-    const added = await queue.enqueue([entry("ENG-42", "issue.completed", "Fix login bug", 2)]);
-    expect(added).toBe(0);
-    expect(readItems()).toHaveLength(0);
-  });
-
-  it("removes existing ticket on issue.canceled", async () => {
-    const queue = new InboxQueue(QUEUE_PATH);
-    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
-
-    const added = await queue.enqueue([entry("ENG-42", "issue.canceled", "Fix login bug", 2)]);
+    const added = await queue.enqueue([entry("ENG-42", "issue.state_removed", "Fix login bug", 2)]);
     expect(added).toBe(0);
     expect(readItems()).toHaveLength(0);
   });
@@ -332,9 +323,28 @@ describe("InboxQueue priority update", () => {
 describe("QUEUE_EVENT mapping", () => {
   it("maps raw events to queue events", () => {
     expect(QUEUE_EVENT["issue.assigned"]).toBe("ticket");
+    expect(QUEUE_EVENT["issue.state_readded"]).toBe("ticket");
     expect(QUEUE_EVENT["comment.mention"]).toBe("mention");
     expect(QUEUE_EVENT["issue.reassigned"]).toBeUndefined();
     expect(QUEUE_EVENT["issue.unassigned"]).toBeUndefined();
+  });
+});
+
+describe("InboxQueue issue.state_readded enqueue", () => {
+  it("enqueues issue.state_readded as a ticket", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    const added = await queue.enqueue([
+      entry("ENG-42", "issue.state_readded", "Bounced task", 2),
+    ]);
+    expect(added).toBe(1);
+    const items = readItems();
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: "ENG-42",
+      event: "ticket",
+      summary: "Bounced task",
+      priority: 2,
+    });
   });
 });
 

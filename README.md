@@ -29,6 +29,13 @@ plugins:
     teamIds: ["ENG", "OPS"]          # Optional: filter to specific teams (empty = all)
     eventFilter: ["Issue", "Comment"] # Optional: filter event types (empty = all)
     debounceMs: 30000                 # Optional: batch window in ms (default: 30000)
+    stateActions:                     # Optional: map state types/names to queue actions
+      backlog: "add"
+      unstarted: "add"
+      started: "ignore"
+      "In Review": "remove"          # State names override type matches (case-insensitive)
+      completed: "remove"
+      canceled: "remove"
 ```
 
 ### Config Fields
@@ -40,6 +47,7 @@ plugins:
 | `teamIds` | string[] | No | Team keys to scope webhook processing. Empty = all teams. |
 | `eventFilter` | string[] | No | Event types to handle (`Issue`, `Comment`). Empty = all. |
 | `debounceMs` | integer | No | Debounce window in milliseconds. Events arriving within this window are batched into a single message. Must be positive. Default: `30000` (30s). |
+| `stateActions` | object | No | Maps Linear state types or names to queue actions (`"add"`, `"remove"`, `"ignore"`). Keys can be state types (`triage`, `backlog`, `unstarted`, `started`, `completed`, `canceled`) or custom state names (e.g. `"In Review"`). Name matches take precedence over type matches, both case-insensitive. See [State Actions](#state-actions) below. |
 
 ## Webhook Setup
 
@@ -65,9 +73,36 @@ plugins:
 | Issue assigned to mapped user | `wake` | `issue.assigned` |
 | Issue unassigned from mapped user | `notify` | `issue.unassigned` |
 | Issue reassigned away from mapped user | `notify` | `issue.reassigned` |
+| Issue state change → `add` action | `wake` | `issue.state_readded` |
+| Issue state change → `remove` action | `notify` | `issue.state_removed` |
 | @mention in comment (mapped user) | `wake` | `comment.mention` |
 
-`wake` events are enqueued into the debouncer and dispatched to the agent. `notify` events are logged only.
+`wake` events are enqueued into the debouncer and dispatched to the agent. `notify` events write to the queue without waking.
+
+## State Actions
+
+When an issue's state changes, the plugin resolves what to do based on the `stateActions` config. This lets you control which state transitions re-add issues to the queue (e.g. bounced back from testing) vs. remove them (e.g. done/canceled) vs. are ignored (e.g. in progress).
+
+**Resolution order:** state name match → state type match → built-in default.
+
+Linear has 6 fixed state types. Custom state names (e.g. "In Review", "QA") are team-specific but always belong to one of these types. The `stateActions` config lets you match on either.
+
+**Built-in defaults** (used when `stateActions` is not configured or a state isn't mapped):
+
+| State Type | Default Action |
+|---|---|
+| `triage` | `ignore` |
+| `backlog` | `add` |
+| `unstarted` | `add` |
+| `started` | `ignore` |
+| `completed` | `remove` |
+| `canceled` | `remove` |
+
+**Actions:**
+
+- `"add"` — re-add the issue to the queue as a ticket and wake the agent
+- `"remove"` — remove the issue's ticket from the queue
+- `"ignore"` — do nothing (default for unmapped states)
 
 ## How Dispatch Works
 

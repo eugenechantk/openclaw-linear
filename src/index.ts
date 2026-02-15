@@ -12,8 +12,8 @@ const EVENT_LABELS: Record<string, string> = {
   "issue.unassigned": "Unassigned",
   "issue.reassigned": "Reassigned",
   "issue.removed": "Removed",
-  "issue.completed": "Completed",
-  "issue.canceled": "Canceled",
+  "issue.state_removed": "State Removed",
+  "issue.state_readded": "State Re-added",
   "issue.priority_changed": "Priority Changed",
   "comment.mention": "Mentioned",
 };
@@ -150,11 +150,15 @@ export function activate(api: OpenClawPluginApi): void {
 
   api.registerTool(createQueueTool(queue));
 
+  const stateActions =
+    (api.pluginConfig?.["stateActions"] as Record<string, string>) ?? undefined;
+
   const route = createEventRouter({
     agentMapping,
     logger: api.logger,
     eventFilter: eventFilter.length ? eventFilter : undefined,
     teamIds: teamIds.length ? teamIds : undefined,
+    stateActions,
   });
 
   const debouncer = api.runtime.channel.debounce.createInboundDebouncer<RouterAction>({

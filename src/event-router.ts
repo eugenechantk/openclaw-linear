@@ -12,6 +12,8 @@ export type RouterAction = {
   linearUserId: string;
 };
 
+export type StateAction = "add" | "remove" | "ignore";
+
 export type EventRouterConfig = {
   agentMapping: Record<string, string>;
   logger: {
@@ -20,7 +22,54 @@ export type EventRouterConfig = {
   };
   eventFilter?: string[];
   teamIds?: string[];
+  stateActions?: Record<string, string>;
 };
+
+export const DEFAULT_STATE_ACTIONS: Record<string, StateAction> = {
+  triage: "ignore",
+  backlog: "add",
+  unstarted: "add",
+  started: "ignore",
+  completed: "remove",
+  canceled: "remove",
+};
+
+export function resolveStateAction(
+  config: EventRouterConfig,
+  stateType: string | undefined,
+  stateName: string | undefined,
+): StateAction {
+  if (config.stateActions) {
+    // Build lowercase lookup from config
+    const lookup = new Map<string, string>();
+    for (const [key, value] of Object.entries(config.stateActions)) {
+      lookup.set(key.toLowerCase(), value);
+    }
+
+    // Check state name first (case-insensitive)
+    if (stateName) {
+      const byName = lookup.get(stateName.toLowerCase());
+      if (byName === "add" || byName === "remove" || byName === "ignore") {
+        return byName;
+      }
+    }
+
+    // Check state type
+    if (stateType) {
+      const byType = lookup.get(stateType.toLowerCase());
+      if (byType === "add" || byType === "remove" || byType === "ignore") {
+        return byType;
+      }
+    }
+  }
+
+  // Fall back to built-in defaults
+  if (stateType && stateType in DEFAULT_STATE_ACTIONS) {
+    return DEFAULT_STATE_ACTIONS[stateType];
+  }
+
+  return "ignore";
+}
 
 /**
  * Extract mention user IDs from ProseMirror bodyData JSON.
@@ -153,27 +202,43 @@ function handleIssueUpdate(
     }
   }
 
-  // --- State changes (completed / canceled) ---
+  // --- State changes (configurable per state type/name) ---
   if ("stateId" in updatedFrom) {
     const state = event.data.state as Record<string, unknown> | undefined;
     const stateType = state?.type as string | undefined;
-    if (stateType === "completed" || stateType === "canceled") {
+    const stateName = state?.name as string | undefined;
+    const action = resolveStateAction(config, stateType, stateName);
+
+    if (action === "remove" || action === "add") {
       const assigneeId = event.data.assigneeId as string | undefined;
       if (assigneeId) {
         const agentId = config.agentMapping[assigneeId];
         if (agentId) {
-          const eventName = stateType === "completed" ? "issue.completed" : "issue.canceled";
-          actions.push({
-            type: "notify",
-            agentId,
-            event: eventName,
-            detail: `Issue ${issueLabel} ${stateType}`,
-            issueId,
-            issueLabel,
-            identifier,
-            issuePriority,
-            linearUserId: assigneeId,
-          });
+          if (action === "remove") {
+            actions.push({
+              type: "notify",
+              agentId,
+              event: "issue.state_removed",
+              detail: `Issue ${issueLabel} moved to ${stateName ?? stateType ?? "unknown"}`,
+              issueId,
+              issueLabel,
+              identifier,
+              issuePriority,
+              linearUserId: assigneeId,
+            });
+          } else {
+            actions.push({
+              type: "wake",
+              agentId,
+              event: "issue.state_readded",
+              detail: `Issue ${issueLabel} moved to ${stateName ?? stateType ?? "unknown"}`,
+              issueId,
+              issueLabel,
+              identifier,
+              issuePriority,
+              linearUserId: assigneeId,
+            });
+          }
         }
       }
     }

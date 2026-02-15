@@ -23,6 +23,7 @@ export interface QueueItem {
 
 export const QUEUE_EVENT: Record<string, string> = {
   "issue.assigned": "ticket",
+  "issue.state_readded": "ticket",
   "comment.mention": "mention",
 };
 
@@ -30,8 +31,7 @@ const REMOVAL_EVENTS = new Set([
   "issue.unassigned",
   "issue.reassigned",
   "issue.removed",
-  "issue.completed",
-  "issue.canceled",
+  "issue.state_removed",
 ]);
 
 export interface EnqueueEntry {

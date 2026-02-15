@@ -279,8 +279,61 @@ describe("event-router", () => {
     });
   });
 
-  describe("state changes", () => {
-    it("emits issue.completed when state changes to completed", () => {
+  describe("state changes (configurable)", () => {
+    it("default: backlog → wake issue.state_readded", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "update",
+        data: {
+          id: "issue-back",
+          identifier: "ENG-10",
+          title: "Bounced task",
+          assigneeId: "user-1",
+          state: { type: "backlog", name: "Backlog" },
+        },
+        updatedFrom: { stateId: "state-old" },
+        createdAt: new Date().toISOString(),
+      };
+
+      const actions = route(event);
+      expect(actions).toHaveLength(1);
+      expect(actions[0]).toMatchObject({
+        type: "wake",
+        event: "issue.state_readded",
+        agentId: "agent-1",
+        linearUserId: "user-1",
+      });
+    });
+
+    it("default: unstarted → wake issue.state_readded", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "update",
+        data: {
+          id: "issue-todo",
+          assigneeId: "user-1",
+          state: { type: "unstarted", name: "Todo" },
+        },
+        updatedFrom: { stateId: "state-old" },
+        createdAt: new Date().toISOString(),
+      };
+
+      const actions = route(event);
+      expect(actions).toHaveLength(1);
+      expect(actions[0]).toMatchObject({
+        type: "wake",
+        event: "issue.state_readded",
+        agentId: "agent-1",
+      });
+    });
+
+    it("default: completed → notify issue.state_removed", () => {
       const config = makeConfig();
       const route = createEventRouter(config);
 
@@ -292,7 +345,7 @@ describe("event-router", () => {
           identifier: "ENG-10",
           title: "Done task",
           assigneeId: "user-1",
-          state: { type: "completed" },
+          state: { type: "completed", name: "Done" },
         },
         updatedFrom: { stateId: "state-old" },
         createdAt: new Date().toISOString(),
@@ -302,13 +355,13 @@ describe("event-router", () => {
       expect(actions).toHaveLength(1);
       expect(actions[0]).toMatchObject({
         type: "notify",
-        event: "issue.completed",
+        event: "issue.state_removed",
         agentId: "agent-1",
         linearUserId: "user-1",
       });
     });
 
-    it("emits issue.canceled when state changes to canceled", () => {
+    it("default: canceled → notify issue.state_removed", () => {
       const config = makeConfig();
       const route = createEventRouter(config);
 
@@ -318,7 +371,7 @@ describe("event-router", () => {
         data: {
           id: "issue-cancel",
           assigneeId: "user-2",
-          state: { type: "canceled" },
+          state: { type: "canceled", name: "Canceled" },
         },
         updatedFrom: { stateId: "state-old" },
         createdAt: new Date().toISOString(),
@@ -328,12 +381,12 @@ describe("event-router", () => {
       expect(actions).toHaveLength(1);
       expect(actions[0]).toMatchObject({
         type: "notify",
-        event: "issue.canceled",
+        event: "issue.state_removed",
         agentId: "agent-2",
       });
     });
 
-    it("ignores state change to non-terminal state", () => {
+    it("default: started → no action (ignore)", () => {
       const config = makeConfig();
       const route = createEventRouter(config);
 
@@ -343,7 +396,84 @@ describe("event-router", () => {
         data: {
           id: "issue-progress",
           assigneeId: "user-1",
-          state: { type: "started" },
+          state: { type: "started", name: "In Progress" },
+        },
+        updatedFrom: { stateId: "state-old" },
+        createdAt: new Date().toISOString(),
+      };
+
+      expect(route(event)).toEqual([]);
+    });
+
+    it("custom config: state name overrides type", () => {
+      const config = makeConfig(undefined, {
+        stateActions: {
+          started: "ignore",
+          "In Review": "remove",
+        },
+      });
+      const route = createEventRouter(config);
+
+      // "In Review" is a started-type state, but name match takes precedence
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "update",
+        data: {
+          id: "issue-review",
+          assigneeId: "user-1",
+          state: { type: "started", name: "In Review" },
+        },
+        updatedFrom: { stateId: "state-old" },
+        createdAt: new Date().toISOString(),
+      };
+
+      const actions = route(event);
+      expect(actions).toHaveLength(1);
+      expect(actions[0]).toMatchObject({
+        type: "notify",
+        event: "issue.state_removed",
+      });
+    });
+
+    it("custom config: case-insensitive name match", () => {
+      const config = makeConfig(undefined, {
+        stateActions: {
+          "in review": "remove",
+        },
+      });
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "update",
+        data: {
+          id: "issue-review",
+          assigneeId: "user-1",
+          state: { type: "started", name: "In Review" },
+        },
+        updatedFrom: { stateId: "state-old" },
+        createdAt: new Date().toISOString(),
+      };
+
+      const actions = route(event);
+      expect(actions).toHaveLength(1);
+      expect(actions[0]).toMatchObject({
+        type: "notify",
+        event: "issue.state_removed",
+      });
+    });
+
+    it("unknown state type → ignore", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "update",
+        data: {
+          id: "issue-unknown",
+          assigneeId: "user-1",
+          state: { type: "custom_state", name: "Whatever" },
         },
         updatedFrom: { stateId: "state-old" },
         createdAt: new Date().toISOString(),
@@ -361,7 +491,7 @@ describe("event-router", () => {
         action: "update",
         data: {
           id: "issue-no-assignee",
-          state: { type: "completed" },
+          state: { type: "completed", name: "Done" },
         },
         updatedFrom: { stateId: "state-old" },
         createdAt: new Date().toISOString(),
@@ -428,7 +558,7 @@ describe("event-router", () => {
         data: {
           id: "issue-combo",
           assigneeId: "user-1",
-          state: { type: "completed" },
+          state: { type: "completed", name: "Done" },
           priority: 1,
         },
         updatedFrom: { assigneeId: null, stateId: "state-old", priority: 3 },
@@ -436,11 +566,11 @@ describe("event-router", () => {
       };
 
       const actions = route(event);
-      // assignment + completed + priority_changed
+      // assignment + state_removed + priority_changed
       expect(actions).toHaveLength(3);
       expect(actions.map((a) => a.event)).toEqual([
         "issue.assigned",
-        "issue.completed",
+        "issue.state_removed",
         "issue.priority_changed",
       ]);
     });

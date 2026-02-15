@@ -30,6 +30,11 @@
       "debounceMs": {
         "type": "integer",
         "description": "Debounce window in milliseconds for batching webhook events before dispatch (default: 30000)"
+      },
+      "stateActions": {
+        "type": "object",
+        "additionalProperties": { "type": "string", "enum": ["add", "remove", "ignore"] },
+        "description": "Map Linear state types or names to queue actions. Keys can be state types (triage, backlog, unstarted, started, completed, canceled) or state names (e.g. \"In Review\", \"Todo\"). Name matches take precedence over type matches (case-insensitive). Actions: add (re-add to queue), remove (remove from queue), ignore (do nothing). Defaults: backlog/unstarted=add, completed/canceled=remove, others=ignore."
       }
     },
     "required": ["webhookSecret"]
