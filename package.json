@@ -13,6 +13,7 @@
   },
   "files": [
     "dist",
+    "skills",
     "openclaw.plugin.json",
     "LICENSE",
     "README.md"
