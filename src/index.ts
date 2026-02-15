@@ -2,7 +2,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { createWebhookHandler } from "./webhook-handler.js";
 import { createEventRouter, type RouterAction } from "./event-router.js";
 import { InboxQueue, type EnqueueEntry } from "./work-queue.js";
-import { createQueueTool } from "./queue-tool.js";
+import { createQueueTool, type QueueToolOptions } from "./queue-tool.js";
 
 const CHANNEL_ID = "linear";
 const DEFAULT_DEBOUNCE_MS = 30_000;
@@ -145,15 +145,80 @@ export function activate(api: OpenClawPluginApi): void {
       ? rawDebounceMs
       : DEFAULT_DEBOUNCE_MS;
 
+  const core = api.runtime;
+  const cfg = api.config;
+
   const queuePath = api.resolvePath("queue/inbox.jsonl");
   const queue = new InboxQueue(queuePath);
 
-  api.registerTool(createQueueTool(queue));
+  // Recover any stale in_progress items from a previous crash
+  queue.recover().then((count) => {
+    if (count > 0) {
+      api.logger.info(`[linear] Recovered ${count} stale in_progress queue item(s)`);
+    }
+  }).catch((err) => {
+    api.logger.error(
+      `[linear] Queue recovery failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
+
+  const dispatchQueueCheck = (remainingCount: number): void => {
+    const peerId = `queue-wake-${Date.now()}`;
+    const route = core.channel.routing.resolveAgentRoute({
+      cfg,
+      channel: CHANNEL_ID,
+      accountId: "default",
+      peer: { kind: "direct" as const, id: peerId },
+    });
+
+    const body = `${remainingCount} item(s) remaining in queue. Use the linear_queue tool to continue processing.`;
+
+    const ctx = core.channel.reply.finalizeInboundContext({
+      Body: body,
+      BodyForAgent: body,
+      RawBody: body,
+      CommandBody: body,
+      From: `${CHANNEL_ID}:${peerId}`,
+      To: `${CHANNEL_ID}:${route.agentId ?? "default"}`,
+      SessionKey: route.sessionKey,
+      AccountId: route.accountId ?? "default",
+      ChatType: "direct",
+      ConversationLabel: `Linear: queue check (${remainingCount} remaining)`,
+      SenderId: peerId,
+      Provider: CHANNEL_ID,
+      Surface: CHANNEL_ID,
+      OriginatingChannel: CHANNEL_ID,
+      OriginatingTo: `${CHANNEL_ID}:${peerId}`,
+    });
+
+    core.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+      ctx,
+      cfg,
+      dispatcherOptions: {
+        deliver: async () => {},
+        onError: (err: unknown) => {
+          api.logger.error(
+            `[linear] Queue wake error: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        },
+      },
+    }).catch((err) => {
+      api.logger.error(
+        `[linear] Queue wake dispatch failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  };
+
+  const queueToolOptions: QueueToolOptions = {
+    onQueueCheck: dispatchQueueCheck,
+  };
+
+  api.registerTool(createQueueTool(queue, queueToolOptions));
 
   const stateActions =
     (api.pluginConfig?.["stateActions"] as Record<string, string>) ?? undefined;
 
-  const route = createEventRouter({
+  const routeEvent = createEventRouter({
     agentMapping,
     logger: api.logger,
     eventFilter: eventFilter.length ? eventFilter : undefined,
@@ -180,7 +245,7 @@ export function activate(api: OpenClawPluginApi): void {
     webhookSecret,
     logger: api.logger,
     onEvent: (event) => {
-      const actions = route(event);
+      const actions = routeEvent(event);
       for (const action of actions) {
         api.logger.info(
           `[event-router] ${action.type} agent=${action.agentId} event=${action.event}: ${action.detail}`,

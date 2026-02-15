@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, rmSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 import {
   InboxQueue,
   QUEUE_EVENT,
@@ -117,6 +117,64 @@ describe("InboxQueue.enqueue", () => {
   });
 });
 
+// --- InboxQueue.pop (claim semantics) ---
+
+describe("InboxQueue.pop", () => {
+  it("returns null for empty queue", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    expect(await queue.pop()).toBeNull();
+  });
+
+  it("marks highest-priority item as in_progress (not removed)", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([
+      entry("ENG-10", "comment.mention", "hey", 4),
+      entry("ENG-11", "issue.assigned", "urgent fix", 1),
+    ]);
+
+    const item = await queue.pop();
+    expect(item!.id).toBe("ENG-11");
+    expect(item!.status).toBe("in_progress");
+
+    // Both items still in file, but ENG-11 is in_progress
+    const onDisk = readItems();
+    expect(onDisk).toHaveLength(2);
+    expect(onDisk.find((i) => i.id === "ENG-11")!.status).toBe("in_progress");
+    expect(onDisk.find((i) => i.id === "ENG-10")!.status).toBe("pending");
+  });
+
+  it("skips in_progress items and returns next pending", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([
+      entry("ENG-10", "comment.mention", "hey", 4),
+      entry("ENG-11", "issue.assigned", "urgent fix", 1),
+    ]);
+
+    const first = await queue.pop();
+    expect(first!.id).toBe("ENG-11");
+
+    const second = await queue.pop();
+    expect(second!.id).toBe("ENG-10");
+
+    // No more pending items
+    expect(await queue.pop()).toBeNull();
+  });
+
+  it("returns items in priority order across multiple pops", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([
+      entry("ENG-10", "comment.mention", "hey", 4),
+      entry("ENG-11", "issue.assigned", "urgent fix", 1),
+      entry("ENG-12", "issue.assigned", "medium task", 3),
+    ]);
+
+    expect((await queue.pop())!.id).toBe("ENG-11");
+    expect((await queue.pop())!.id).toBe("ENG-12");
+    expect((await queue.pop())!.id).toBe("ENG-10");
+    expect(await queue.pop()).toBeNull();
+  });
+});
+
 // --- InboxQueue.peek ---
 
 describe("InboxQueue.peek", () => {
@@ -144,51 +202,25 @@ describe("InboxQueue.peek", () => {
     await queue.peek();
     expect(readItems()).toHaveLength(1);
   });
-});
 
-// --- InboxQueue.pop ---
-
-describe("InboxQueue.pop", () => {
-  it("returns null for empty queue", async () => {
-    const queue = new InboxQueue(QUEUE_PATH);
-    expect(await queue.pop()).toBeNull();
-  });
-
-  it("removes and returns highest-priority item", async () => {
+  it("only returns pending items", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
     await queue.enqueue([
       entry("ENG-10", "comment.mention", "hey", 4),
       entry("ENG-11", "issue.assigned", "urgent fix", 1),
     ]);
 
-    const item = await queue.pop();
-    expect(item!.id).toBe("ENG-11");
-    expect(item!.event).toBe("ticket");
-    expect(item!.priority).toBe(1);
+    // Claim one
+    await queue.pop();
 
-    // Only the mention remains
-    const remaining = readItems();
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0].id).toBe("ENG-10");
-    expect(remaining[0].event).toBe("mention");
-  });
-
-  it("returns items in priority order across multiple pops", async () => {
-    const queue = new InboxQueue(QUEUE_PATH);
-    await queue.enqueue([
-      entry("ENG-10", "comment.mention", "hey", 4),
-      entry("ENG-11", "issue.assigned", "urgent fix", 1),
-      entry("ENG-12", "issue.assigned", "medium task", 3),
-    ]);
-
-    expect((await queue.pop())!.id).toBe("ENG-11");
-    expect((await queue.pop())!.id).toBe("ENG-12");
-    expect((await queue.pop())!.id).toBe("ENG-10");
-    expect(await queue.pop()).toBeNull();
+    const items = await queue.peek();
+    expect(items).toHaveLength(1);
+    expect(items[0].id).toBe("ENG-10");
+    expect(items[0].status).toBe("pending");
   });
 });
 
-// --- InboxQueue.drain ---
+// --- InboxQueue.drain (claim semantics) ---
 
 describe("InboxQueue.drain", () => {
   it("returns empty array for empty queue", async () => {
@@ -196,7 +228,7 @@ describe("InboxQueue.drain", () => {
     expect(await queue.drain()).toEqual([]);
   });
 
-  it("removes and returns all items sorted by priority", async () => {
+  it("claims all pending items sorted by priority", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
     await queue.enqueue([
       entry("ENG-10", "comment.mention", "hey", 4),
@@ -205,10 +237,121 @@ describe("InboxQueue.drain", () => {
 
     const items = await queue.drain();
     expect(items.map((i) => i.id)).toEqual(["ENG-11", "ENG-10"]);
+    expect(items.every((i) => i.status === "in_progress")).toBe(true);
 
-    // Queue is now empty
-    expect(readItems()).toHaveLength(0);
+    // Items still on disk but all in_progress
+    const onDisk = readItems();
+    expect(onDisk).toHaveLength(2);
+    expect(onDisk.every((i) => i.status === "in_progress")).toBe(true);
+
+    // No pending items left
     expect(await queue.peek()).toEqual([]);
+  });
+
+  it("skips already in_progress items", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([
+      entry("ENG-10", "comment.mention", "hey", 4),
+      entry("ENG-11", "issue.assigned", "urgent fix", 1),
+    ]);
+
+    // Claim one via pop
+    await queue.pop();
+
+    // Drain should only get remaining pending item
+    const items = await queue.drain();
+    expect(items).toHaveLength(1);
+    expect(items[0].id).toBe("ENG-10");
+  });
+});
+
+// --- InboxQueue.complete ---
+
+describe("InboxQueue.complete", () => {
+  it("removes in_progress item matching issueId", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix bug", 2)]);
+    await queue.pop(); // claim it
+
+    const result = await queue.complete("ENG-42");
+    expect(result).toBe(true);
+    expect(readItems()).toHaveLength(0);
+  });
+
+  it("is a no-op for non-existent issueId", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix bug", 2)]);
+    await queue.pop();
+
+    const result = await queue.complete("ENG-99");
+    expect(result).toBe(false);
+    expect(readItems()).toHaveLength(1);
+  });
+
+  it("does not remove pending items", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix bug", 2)]);
+
+    // Item is pending, not in_progress
+    const result = await queue.complete("ENG-42");
+    expect(result).toBe(false);
+    expect(readItems()).toHaveLength(1);
+  });
+});
+
+// --- InboxQueue.recover ---
+
+describe("InboxQueue.recover", () => {
+  it("resets in_progress items back to pending", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([
+      entry("ENG-10", "comment.mention", "hey", 4),
+      entry("ENG-11", "issue.assigned", "urgent fix", 1),
+    ]);
+    await queue.pop(); // claim ENG-11
+
+    const count = await queue.recover();
+    expect(count).toBe(1);
+
+    const items = readItems();
+    expect(items.every((i) => i.status === "pending")).toBe(true);
+  });
+
+  it("returns 0 when no in_progress items", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix bug", 2)]);
+
+    const count = await queue.recover();
+    expect(count).toBe(0);
+  });
+
+  it("returns 0 for empty queue", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    const count = await queue.recover();
+    expect(count).toBe(0);
+  });
+});
+
+// --- Backward compatibility ---
+
+describe("InboxQueue backward compatibility", () => {
+  it("treats items without status field as pending", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    // Write an item without status field (old format)
+    mkdirSync(dirname(QUEUE_PATH), { recursive: true });
+    writeFileSync(
+      QUEUE_PATH,
+      JSON.stringify({ id: "ENG-1", issueId: "ENG-1", event: "ticket", summary: "Old item", priority: 2, addedAt: "2024-01-01T00:00:00.000Z" }) + "\n",
+    );
+
+    const items = await queue.peek();
+    expect(items).toHaveLength(1);
+    expect(items[0].status).toBe("pending");
+
+    // Should be claimable via pop
+    const claimed = await queue.pop();
+    expect(claimed!.id).toBe("ENG-1");
+    expect(claimed!.status).toBe("in_progress");
   });
 });
 
@@ -281,6 +424,19 @@ describe("InboxQueue removal events", () => {
     const items = readItems();
     expect(items).toHaveLength(1);
     expect(items[0].issueId).toBe("ENG-43");
+  });
+
+  it("removes in_progress items on removal event", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
+    await queue.pop(); // claim it (in_progress)
+
+    const onDisk = readItems();
+    expect(onDisk[0].status).toBe("in_progress");
+
+    // Unassign should remove even though in_progress
+    await queue.enqueue([entry("ENG-42", "issue.unassigned", "Fix login bug", 2)]);
+    expect(readItems()).toHaveLength(0);
   });
 });
 
@@ -376,11 +532,16 @@ describe("InboxQueue mutex serialization", () => {
     const results = [a, b].filter(Boolean);
     expect(results).toHaveLength(2);
 
-    // Each item popped exactly once
+    // Each item claimed exactly once
     const ids = results.map((r) => r!.id).sort();
     expect(ids).toEqual(["ENG-1", "ENG-2"]);
 
-    // Queue is now empty
+    // No more pending items
     expect(await queue.pop()).toBeNull();
+
+    // Both items still on disk as in_progress
+    const onDisk = readItems();
+    expect(onDisk).toHaveLength(2);
+    expect(onDisk.every((i) => i.status === "in_progress")).toBe(true);
   });
 });

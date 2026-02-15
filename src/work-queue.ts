@@ -19,6 +19,7 @@ export interface QueueItem {
   summary: string;
   priority: number;
   addedAt: string;
+  status: "pending" | "in_progress";
 }
 
 export const QUEUE_EVENT: Record<string, string> = {
@@ -74,7 +75,9 @@ function readJsonl(path: string): QueueItem[] {
       const trimmed = line.trim();
       if (!trimmed) continue;
       try {
-        items.push(JSON.parse(trimmed) as QueueItem);
+        const item = JSON.parse(trimmed) as QueueItem;
+        if (!item.status) item.status = "pending"; // backward compat
+        items.push(item);
       } catch {
         // skip malformed lines
       }
@@ -191,6 +194,7 @@ export class InboxQueue {
           summary: entry.summary,
           priority: mapPriority(entry.issuePriority),
           addedAt: now,
+          status: "pending",
         });
         existingKeys.add(dedupKey);
       }
@@ -205,43 +209,87 @@ export class InboxQueue {
     }
   }
 
-  /** Return all items sorted by priority (lowest number first). Non-destructive. */
+  /** Return pending items sorted by priority (lowest number first). Non-destructive. */
   async peek(): Promise<QueueItem[]> {
     const release = await this.mutex.acquire();
     try {
-      const items = readJsonl(this.path);
+      const items = readJsonl(this.path).filter((i) => i.status === "pending");
       return items.sort((a, b) => a.priority - b.priority || a.addedAt.localeCompare(b.addedAt));
     } finally {
       release();
     }
   }
 
-  /** Remove and return the highest-priority item, or null if empty. */
+  /** Claim the highest-priority pending item (mark as in_progress), or null if none pending. */
   async pop(): Promise<QueueItem | null> {
     const release = await this.mutex.acquire();
     try {
       const items = readJsonl(this.path);
-      if (items.length === 0) return null;
+      const pending = items
+        .filter((i) => i.status === "pending")
+        .sort((a, b) => a.priority - b.priority || a.addedAt.localeCompare(b.addedAt));
+      if (pending.length === 0) return null;
 
-      items.sort((a, b) => a.priority - b.priority || a.addedAt.localeCompare(b.addedAt));
-      const [popped, ...rest] = items;
-      writeJsonl(this.path, rest);
-      return popped;
+      const claimed = pending[0];
+      claimed.status = "in_progress";
+      writeJsonl(this.path, items);
+      return claimed;
     } finally {
       release();
     }
   }
 
-  /** Remove and return all items sorted by priority. */
+  /** Claim all pending items (mark as in_progress), return sorted by priority. */
   async drain(): Promise<QueueItem[]> {
     const release = await this.mutex.acquire();
     try {
       const items = readJsonl(this.path);
-      if (items.length === 0) return [];
+      const pending = items.filter((i) => i.status === "pending");
+      if (pending.length === 0) return [];
 
-      items.sort((a, b) => a.priority - b.priority || a.addedAt.localeCompare(b.addedAt));
-      writeJsonl(this.path, []);
-      return items;
+      for (const item of pending) {
+        item.status = "in_progress";
+      }
+      writeJsonl(this.path, items);
+
+      return pending.sort((a, b) => a.priority - b.priority || a.addedAt.localeCompare(b.addedAt));
+    } finally {
+      release();
+    }
+  }
+
+  /** Remove the in_progress item matching issueId. */
+  async complete(issueId: string): Promise<boolean> {
+    const release = await this.mutex.acquire();
+    try {
+      const items = readJsonl(this.path);
+      const idx = items.findIndex(
+        (i) => i.issueId === issueId && i.status === "in_progress",
+      );
+      if (idx === -1) return false;
+
+      items.splice(idx, 1);
+      writeJsonl(this.path, items);
+      return true;
+    } finally {
+      release();
+    }
+  }
+
+  /** Reset all in_progress items back to pending (crash recovery). */
+  async recover(): Promise<number> {
+    const release = await this.mutex.acquire();
+    try {
+      const items = readJsonl(this.path);
+      let count = 0;
+      for (const item of items) {
+        if (item.status === "in_progress") {
+          item.status = "pending";
+          count++;
+        }
+      }
+      if (count > 0) writeJsonl(this.path, items);
+      return count;
     } finally {
       release();
     }

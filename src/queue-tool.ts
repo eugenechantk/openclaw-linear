@@ -3,28 +3,40 @@ import type { AnyAgentTool } from "openclaw/plugin-sdk";
 import { jsonResult } from "openclaw/plugin-sdk";
 import type { InboxQueue } from "./work-queue.js";
 
-const QueueAction = Type.Unsafe<"peek" | "pop" | "drain">({
+const QueueAction = Type.Unsafe<"peek" | "pop" | "drain" | "complete">({
   type: "string",
-  enum: ["peek", "pop", "drain"],
+  enum: ["peek", "pop", "drain", "complete"],
   description:
     "peek: view all pending items without removing them. " +
-    "pop: remove and return the highest-priority item. " +
-    "drain: remove and return all items.",
+    "pop: claim the highest-priority pending item. " +
+    "drain: claim all pending items. " +
+    "complete: finish work on an in-progress item (requires issueId).",
 });
 
 const QueueToolParams = Type.Object({
   action: QueueAction,
+  issueId: Type.Optional(
+    Type.String({ description: "Issue ID to complete (required for 'complete' action)." }),
+  ),
 });
 
 type QueueToolParams = Static<typeof QueueToolParams>;
 
-export function createQueueTool(queue: InboxQueue): AnyAgentTool {
+export interface QueueToolOptions {
+  onQueueCheck?: (remainingCount: number) => void;
+}
+
+export function createQueueTool(
+  queue: InboxQueue,
+  options?: QueueToolOptions,
+): AnyAgentTool {
   return {
     name: "linear_queue",
     label: "Linear Queue",
     description:
       "Manage the Linear notification inbox queue. " +
-      "Use 'peek' to see pending items, 'pop' to take the next item, or 'drain' to take all items.",
+      "Use 'peek' to see pending items, 'pop' to claim the next item, 'drain' to claim all items, " +
+      "or 'complete' to finish work on a claimed item.",
     parameters: QueueToolParams,
     async execute(_toolCallId: string, params: QueueToolParams) {
       switch (params.action) {
@@ -39,6 +51,21 @@ export function createQueueTool(queue: InboxQueue): AnyAgentTool {
         case "drain": {
           const items = await queue.drain();
           return jsonResult({ count: items.length, items });
+        }
+        case "complete": {
+          if (!params.issueId) {
+            return jsonResult({ error: "issueId is required for 'complete' action" });
+          }
+          const completed = await queue.complete(params.issueId);
+          const remaining = await queue.peek();
+          if (remaining.length > 0 && options?.onQueueCheck) {
+            options.onQueueCheck(remaining.length);
+          }
+          return jsonResult({
+            completed,
+            issueId: params.issueId,
+            remaining: remaining.length,
+          });
         }
         default:
           return jsonResult({
