@@ -1,6 +1,6 @@
 {
   "name": "openclaw-linear",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Linear webhook integration for OpenClaw — receives events, routes them, and dispatches consolidated notifications to agents",
   "type": "module",
   "main": "dist/index.js",
