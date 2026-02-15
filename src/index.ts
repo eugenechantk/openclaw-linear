@@ -1,6 +1,7 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { createWebhookHandler } from "./webhook-handler.js";
 import { createEventRouter, type RouterAction } from "./event-router.js";
+import { handleIntake, handleRecovery } from "./work-queue.js";
 
 const CHANNEL_ID = "linear";
 const DEFAULT_DEBOUNCE_MS = 30_000;
@@ -41,6 +42,7 @@ function formatActionSummary(action: RouterAction): string {
 async function dispatchConsolidatedActions(
   actions: RouterAction[],
   api: OpenClawPluginApi,
+  queuePath: string,
 ): Promise<void> {
   if (actions.length === 0) return;
 
@@ -59,7 +61,17 @@ async function dispatchConsolidatedActions(
     },
   });
 
-  const body = formatConsolidatedMessage(actions);
+  // Write to queue deterministically — no LLM involved
+  const rawBody = formatConsolidatedMessage(actions);
+  const added = handleIntake(rawBody, queuePath);
+
+  if (added === 0) {
+    api.logger.info("[linear] All notifications deduped — skipping agent dispatch");
+    return;
+  }
+
+  // Agent gets a minimal notification pointing to the queue
+  const body = `${added} new Linear notification(s) queued. Pending items in queue/work-queue.json.`;
 
   const ctx = core.channel.reply.finalizeInboundContext({
     Body: body,
@@ -123,6 +135,16 @@ export function activate(api: OpenClawPluginApi): void {
       ? rawDebounceMs
       : DEFAULT_DEBOUNCE_MS;
 
+  const queuePath = api.resolvePath("queue/work-queue.json");
+
+  // Reset stale in_progress items on gateway startup
+  api.on("gateway_start", () => {
+    const recovered = handleRecovery(queuePath);
+    if (recovered > 0) {
+      api.logger.info(`[linear] Recovered ${recovered} stale queue item(s)`);
+    }
+  });
+
   const route = createEventRouter({
     agentMapping,
     logger: api.logger,
@@ -135,7 +157,7 @@ export function activate(api: OpenClawPluginApi): void {
     buildKey: (action) => action.agentId,
     shouldDebounce: () => true,
     onFlush: async (actions) => {
-      await dispatchConsolidatedActions(actions, api);
+      await dispatchConsolidatedActions(actions, api, queuePath);
     },
     onError: (err) => {
       api.logger.error(
