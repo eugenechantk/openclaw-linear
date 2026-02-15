@@ -44,7 +44,7 @@ export function createIssueUpdateTool(): AnyAgentTool {
           return execLinear(args);
         };
 
-        const result = params.description
+        const result = params.description !== undefined
           ? await withTempFile(params.description, (f) => run(f))
           : await run();
 

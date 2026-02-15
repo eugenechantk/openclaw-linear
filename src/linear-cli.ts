@@ -46,6 +46,11 @@ export function execLinear(
             reject(error);
             return;
           }
+          // Signal-terminated processes (error.signal set, code is null)
+          if ((error as { signal?: string }).signal || typeof code !== "number") {
+            reject(error);
+            return;
+          }
         }
 
         const exitCode =
