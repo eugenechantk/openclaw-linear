@@ -19,8 +19,9 @@ Manages the queue of Linear notifications routed to you by webhooks.
 | Action | Effect |
 |---|---|
 | `peek` | View all pending items sorted by priority. Non-destructive. |
-| `pop` | Remove and return the highest-priority item. |
-| `drain` | Remove and return all items sorted by priority. |
+| `pop` | Claim the highest-priority pending item (marks it `in_progress`). |
+| `drain` | Claim all pending items (marks them `in_progress`). |
+| `complete` | Finish work on a claimed item (requires `issueId`). Removes it from the queue. |
 
 Queue items have this shape:
 
@@ -31,6 +32,7 @@ Queue items have this shape:
   "event": "ticket",
   "summary": "Issue title or comment text",
   "priority": 1,
+  "status": "pending",
   "addedAt": "ISO timestamp"
 }
 ```
@@ -107,13 +109,14 @@ When you receive a Linear notification:
 
 1. **Peek** with `linear_queue { action: "peek" }` to see all pending items.
 2. **Skip** if there are no items.
-3. **Pop** the next item with `linear_queue { action: "pop" }`.
+3. **Pop** the next item with `linear_queue { action: "pop" }`. This claims it (status becomes `in_progress`).
 4. **Read** the issue with `linear_issue_view { issueId: "<id>" }`.
 5. **Read comments** with `linear_comment_list { issueId: "<id>" }` if the event is a mention or you need discussion context.
 6. **Act** on the item:
    - `ticket` — do the work, then update state with `linear_issue_update`.
    - `mention` — read the thread and reply with `linear_comment_add`.
-7. **Repeat** from step 3 until pop returns null.
+7. **Complete** with `linear_queue { action: "complete", issueId: "<id>" }` to remove it from the queue.
+8. **Repeat** from step 3 until pop returns null.
 
 ## Linear CLI reference
 
