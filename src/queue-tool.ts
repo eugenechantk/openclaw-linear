@@ -22,14 +22,7 @@ const QueueToolParams = Type.Object({
 
 type QueueToolParams = Static<typeof QueueToolParams>;
 
-export interface QueueToolOptions {
-  onQueueCheck?: (remainingCount: number) => void;
-}
-
-export function createQueueTool(
-  queue: InboxQueue,
-  options?: QueueToolOptions,
-): AnyAgentTool {
+export function createQueueTool(queue: InboxQueue): AnyAgentTool {
   return {
     name: "linear_queue",
     label: "Linear Queue",
@@ -58,9 +51,6 @@ export function createQueueTool(
           }
           const completed = await queue.complete(params.issueId);
           const remaining = await queue.peek();
-          if (remaining.length > 0 && options?.onQueueCheck) {
-            options.onQueueCheck(remaining.length);
-          }
           return jsonResult({
             completed,
             issueId: params.issueId,

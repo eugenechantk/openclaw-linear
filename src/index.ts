@@ -2,7 +2,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { createWebhookHandler } from "./webhook-handler.js";
 import { createEventRouter, type RouterAction } from "./event-router.js";
 import { InboxQueue, type EnqueueEntry } from "./work-queue.js";
-import { createQueueTool, type QueueToolOptions } from "./queue-tool.js";
+import { createQueueTool } from "./queue-tool.js";
 
 const CHANNEL_ID = "linear";
 const DEFAULT_DEBOUNCE_MS = 30_000;
@@ -162,7 +162,18 @@ export function activate(api: OpenClawPluginApi): void {
     );
   });
 
-  const dispatchQueueCheck = (remainingCount: number): void => {
+  api.registerTool(createQueueTool(queue));
+
+  // Auto-wake: after a "complete" action, dispatch a fresh session if items remain
+  api.on("after_tool_call", async (event) => {
+    if (event.toolName !== "linear_queue") return;
+    if (event.params.action !== "complete") return;
+    if (event.error) return;
+
+    const remaining = await queue.peek();
+    if (remaining.length === 0) return;
+
+    const remainingCount = remaining.length;
     const peerId = `queue-wake-${Date.now()}`;
     const route = core.channel.routing.resolveAgentRoute({
       cfg,
@@ -207,13 +218,7 @@ export function activate(api: OpenClawPluginApi): void {
         `[linear] Queue wake dispatch failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     });
-  };
-
-  const queueToolOptions: QueueToolOptions = {
-    onQueueCheck: dispatchQueueCheck,
-  };
-
-  api.registerTool(createQueueTool(queue, queueToolOptions));
+  });
 
   const stateActions =
     (api.pluginConfig?.["stateActions"] as Record<string, string>) ?? undefined;

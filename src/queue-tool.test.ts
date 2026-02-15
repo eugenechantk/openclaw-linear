@@ -123,37 +123,6 @@ describe("linear_queue tool", () => {
     expect(data.remaining).toBe(0);
   });
 
-  it("complete fires onQueueCheck callback with remaining count", async () => {
-    const queue = new InboxQueue(QUEUE_PATH);
-    await queue.enqueue([
-      entry("ENG-1", "issue.assigned", "Task one", 1),
-      entry("ENG-2", "issue.assigned", "Task two", 2),
-    ]);
-    await queue.pop(); // claim ENG-1
-
-    let callbackCount: number | undefined;
-    const tool = createQueueTool(queue, {
-      onQueueCheck: (count) => { callbackCount = count; },
-    });
-
-    await tool.execute("call-1", { action: "complete", issueId: "ENG-1" });
-    expect(callbackCount).toBe(1); // ENG-2 is still pending
-  });
-
-  it("complete with remaining=0 does not fire callback", async () => {
-    const queue = new InboxQueue(QUEUE_PATH);
-    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix bug", 2)]);
-    await queue.pop(); // claim it
-
-    let callbackFired = false;
-    const tool = createQueueTool(queue, {
-      onQueueCheck: () => { callbackFired = true; },
-    });
-
-    await tool.execute("call-1", { action: "complete", issueId: "ENG-42" });
-    expect(callbackFired).toBe(false);
-  });
-
   it("complete without issueId returns error", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
     const tool = createQueueTool(queue);
