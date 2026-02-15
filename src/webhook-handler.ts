@@ -5,6 +5,7 @@ export type LinearWebhookPayload = {
   action: string;
   type: string;
   data: Record<string, unknown>;
+  updatedFrom?: Record<string, unknown>;
   createdAt: string;
 };
 
@@ -119,6 +120,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
         action: String(payload.action ?? ""),
         type: String(payload.type ?? ""),
         data: (payload.data as Record<string, unknown>) ?? {},
+        updatedFrom: (payload.updatedFrom as Record<string, unknown>) ?? undefined,
         createdAt: String(payload.createdAt ?? ""),
       };
 

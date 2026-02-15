@@ -158,6 +158,49 @@ describe("webhook-handler", () => {
     );
   });
 
+  it("captures updatedFrom and passes to onEvent", async () => {
+    const onEvent = vi.fn();
+    const h = createWebhookHandler({ webhookSecret: SECRET, logger, onEvent });
+
+    const body = JSON.stringify({
+      action: "update",
+      type: "Issue",
+      data: { id: "issue-uf", assigneeId: "user-1" },
+      updatedFrom: { assigneeId: null, priority: 3 },
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+    const req = makeReq(body, { "Linear-Signature": sign(body) });
+    const res = makeRes();
+    await h(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        updatedFrom: { assigneeId: null, priority: 3 },
+        data: expect.objectContaining({ assigneeId: "user-1" }),
+      }),
+    );
+  });
+
+  it("sets updatedFrom to undefined when absent from payload", async () => {
+    const onEvent = vi.fn();
+    const h = createWebhookHandler({ webhookSecret: SECRET, logger, onEvent });
+
+    const body = JSON.stringify({
+      action: "create",
+      type: "Issue",
+      data: { id: "issue-no-uf" },
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+    const req = makeReq(body, { "Linear-Signature": sign(body) });
+    const res = makeRes();
+    await h(req, res);
+
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ updatedFrom: undefined }),
+    );
+  });
+
   it("returns 413 for oversized request body", async () => {
     const req = new EventEmitter() as IncomingMessage;
     req.method = "POST";

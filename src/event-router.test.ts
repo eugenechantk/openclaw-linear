@@ -18,7 +18,7 @@ function makeConfig(
 }
 
 describe("event-router", () => {
-  describe("assignment changes", () => {
+  describe("assignment changes (updatedFrom)", () => {
     it("routes new assignment as wake event", () => {
       const config = makeConfig();
       const route = createEventRouter(config);
@@ -26,10 +26,8 @@ describe("event-router", () => {
       const event: LinearWebhookPayload = {
         type: "Issue",
         action: "update",
-        data: {
-          id: "issue-123",
-          changes: { assigneeId: { to: "user-1" } },
-        },
+        data: { id: "issue-123", assigneeId: "user-1" },
+        updatedFrom: { assigneeId: null },
         createdAt: new Date().toISOString(),
       };
 
@@ -60,8 +58,9 @@ describe("event-router", () => {
           id: "issue-123",
           identifier: "ENG-42",
           title: "Fix login bug",
-          changes: { assigneeId: { to: "user-1" } },
+          assigneeId: "user-1",
         },
+        updatedFrom: { assigneeId: null },
         createdAt: new Date().toISOString(),
       };
 
@@ -79,10 +78,8 @@ describe("event-router", () => {
       const event: LinearWebhookPayload = {
         type: "Issue",
         action: "update",
-        data: {
-          id: "issue-456",
-          changes: { assigneeId: { from: "user-2" } },
-        },
+        data: { id: "issue-456", assigneeId: null },
+        updatedFrom: { assigneeId: "user-2" },
         createdAt: new Date().toISOString(),
       };
 
@@ -109,10 +106,8 @@ describe("event-router", () => {
       const event: LinearWebhookPayload = {
         type: "Issue",
         action: "update",
-        data: {
-          id: "issue-789",
-          changes: { assigneeId: { from: "user-2", to: "user-1" } },
-        },
+        data: { id: "issue-789", assigneeId: "user-1" },
+        updatedFrom: { assigneeId: "user-2" },
         createdAt: new Date().toISOString(),
       };
 
@@ -138,6 +133,316 @@ describe("event-router", () => {
         issuePriority: 0,
         linearUserId: "user-2",
       });
+    });
+
+    it("returns empty when update has no updatedFrom", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "update",
+        data: { id: "issue-no-changes", assigneeId: "user-1" },
+        createdAt: new Date().toISOString(),
+      };
+
+      expect(route(event)).toEqual([]);
+    });
+  });
+
+  describe("issue create", () => {
+    it("routes create with assignee as wake event", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "create",
+        data: {
+          id: "issue-new",
+          identifier: "ENG-99",
+          title: "New feature",
+          assigneeId: "user-1",
+          priority: 2,
+        },
+        createdAt: new Date().toISOString(),
+      };
+
+      const actions = route(event);
+      expect(actions).toEqual([
+        {
+          type: "wake",
+          agentId: "agent-1",
+          event: "issue.assigned",
+          detail: "Assigned to issue ENG-99: New feature",
+          issueId: "issue-new",
+          issueLabel: "ENG-99: New feature",
+          identifier: "ENG-99",
+          issuePriority: 2,
+          linearUserId: "user-1",
+        },
+      ]);
+    });
+
+    it("returns empty for create without assignee", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "create",
+        data: { id: "issue-unassigned" },
+        createdAt: new Date().toISOString(),
+      };
+
+      expect(route(event)).toEqual([]);
+    });
+
+    it("logs unmapped user on create with assignee", () => {
+      const config = makeConfig({});
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "create",
+        data: { id: "issue-unk", assigneeId: "unknown-user" },
+        createdAt: new Date().toISOString(),
+      };
+
+      expect(route(event)).toEqual([]);
+      expect(config.logger.info).toHaveBeenCalledWith(
+        "Unmapped Linear user unknown-user assigned to issue-unk",
+      );
+    });
+  });
+
+  describe("issue remove", () => {
+    it("routes remove with assignee as notify event", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "remove",
+        data: {
+          id: "issue-del",
+          identifier: "ENG-50",
+          title: "Old issue",
+          assigneeId: "user-1",
+          priority: 3,
+        },
+        createdAt: new Date().toISOString(),
+      };
+
+      const actions = route(event);
+      expect(actions).toEqual([
+        {
+          type: "notify",
+          agentId: "agent-1",
+          event: "issue.removed",
+          detail: "Issue ENG-50: Old issue removed",
+          issueId: "issue-del",
+          issueLabel: "ENG-50: Old issue",
+          identifier: "ENG-50",
+          issuePriority: 3,
+          linearUserId: "user-1",
+        },
+      ]);
+    });
+
+    it("returns empty for remove without assignee", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "remove",
+        data: { id: "issue-del-2" },
+        createdAt: new Date().toISOString(),
+      };
+
+      expect(route(event)).toEqual([]);
+    });
+
+    it("returns empty for remove with unmapped assignee", () => {
+      const config = makeConfig({});
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "remove",
+        data: { id: "issue-del-3", assigneeId: "unknown-user" },
+        createdAt: new Date().toISOString(),
+      };
+
+      expect(route(event)).toEqual([]);
+    });
+  });
+
+  describe("state changes", () => {
+    it("emits issue.completed when state changes to completed", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "update",
+        data: {
+          id: "issue-done",
+          identifier: "ENG-10",
+          title: "Done task",
+          assigneeId: "user-1",
+          state: { type: "completed" },
+        },
+        updatedFrom: { stateId: "state-old" },
+        createdAt: new Date().toISOString(),
+      };
+
+      const actions = route(event);
+      expect(actions).toHaveLength(1);
+      expect(actions[0]).toMatchObject({
+        type: "notify",
+        event: "issue.completed",
+        agentId: "agent-1",
+        linearUserId: "user-1",
+      });
+    });
+
+    it("emits issue.canceled when state changes to canceled", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "update",
+        data: {
+          id: "issue-cancel",
+          assigneeId: "user-2",
+          state: { type: "canceled" },
+        },
+        updatedFrom: { stateId: "state-old" },
+        createdAt: new Date().toISOString(),
+      };
+
+      const actions = route(event);
+      expect(actions).toHaveLength(1);
+      expect(actions[0]).toMatchObject({
+        type: "notify",
+        event: "issue.canceled",
+        agentId: "agent-2",
+      });
+    });
+
+    it("ignores state change to non-terminal state", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "update",
+        data: {
+          id: "issue-progress",
+          assigneeId: "user-1",
+          state: { type: "started" },
+        },
+        updatedFrom: { stateId: "state-old" },
+        createdAt: new Date().toISOString(),
+      };
+
+      expect(route(event)).toEqual([]);
+    });
+
+    it("ignores state change when no assignee", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "update",
+        data: {
+          id: "issue-no-assignee",
+          state: { type: "completed" },
+        },
+        updatedFrom: { stateId: "state-old" },
+        createdAt: new Date().toISOString(),
+      };
+
+      expect(route(event)).toEqual([]);
+    });
+  });
+
+  describe("priority changes", () => {
+    it("emits issue.priority_changed when priority changes", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "update",
+        data: {
+          id: "issue-pri",
+          identifier: "ENG-20",
+          title: "Priority task",
+          assigneeId: "user-1",
+          priority: 1,
+        },
+        updatedFrom: { priority: 3 },
+        createdAt: new Date().toISOString(),
+      };
+
+      const actions = route(event);
+      expect(actions).toHaveLength(1);
+      expect(actions[0]).toMatchObject({
+        type: "notify",
+        event: "issue.priority_changed",
+        agentId: "agent-1",
+        issuePriority: 1,
+        linearUserId: "user-1",
+      });
+    });
+
+    it("ignores priority change when no assignee", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "update",
+        data: { id: "issue-pri-2", priority: 1 },
+        updatedFrom: { priority: 3 },
+        createdAt: new Date().toISOString(),
+      };
+
+      expect(route(event)).toEqual([]);
+    });
+  });
+
+  describe("combined changes in single event", () => {
+    it("emits both assignment and state change actions", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Issue",
+        action: "update",
+        data: {
+          id: "issue-combo",
+          assigneeId: "user-1",
+          state: { type: "completed" },
+          priority: 1,
+        },
+        updatedFrom: { assigneeId: null, stateId: "state-old", priority: 3 },
+        createdAt: new Date().toISOString(),
+      };
+
+      const actions = route(event);
+      // assignment + completed + priority_changed
+      expect(actions).toHaveLength(3);
+      expect(actions.map((a) => a.event)).toEqual([
+        "issue.assigned",
+        "issue.completed",
+        "issue.priority_changed",
+      ]);
     });
   });
 
@@ -303,10 +608,8 @@ describe("event-router", () => {
       const event: LinearWebhookPayload = {
         type: "Issue",
         action: "update",
-        data: {
-          id: "issue-999",
-          changes: { assigneeId: { to: "unknown-user" } },
-        },
+        data: { id: "issue-999", assigneeId: "unknown-user" },
+        updatedFrom: { assigneeId: null },
         createdAt: new Date().toISOString(),
       };
 
@@ -353,20 +656,6 @@ describe("event-router", () => {
 
       expect(route(event)).toEqual([]);
     });
-
-    it("returns empty for issue create (not update)", () => {
-      const config = makeConfig();
-      const route = createEventRouter(config);
-
-      const event: LinearWebhookPayload = {
-        type: "Issue",
-        action: "create",
-        data: { id: "issue-1" },
-        createdAt: new Date().toISOString(),
-      };
-
-      expect(route(event)).toEqual([]);
-    });
   });
 
   describe("event filtering", () => {
@@ -380,10 +669,8 @@ describe("event-router", () => {
       const event: LinearWebhookPayload = {
         type: "Issue",
         action: "update",
-        data: {
-          id: "issue-1",
-          changes: { assigneeId: { to: "user-1" } },
-        },
+        data: { id: "issue-1", assigneeId: "user-1" },
+        updatedFrom: { assigneeId: null },
         createdAt: new Date().toISOString(),
       };
 
@@ -400,10 +687,8 @@ describe("event-router", () => {
       const event: LinearWebhookPayload = {
         type: "Issue",
         action: "update",
-        data: {
-          id: "issue-1",
-          changes: { assigneeId: { to: "user-1" } },
-        },
+        data: { id: "issue-1", assigneeId: "user-1" },
+        updatedFrom: { assigneeId: null },
         createdAt: new Date().toISOString(),
       };
 
@@ -425,8 +710,9 @@ describe("event-router", () => {
         data: {
           id: "issue-1",
           teamId: "team-ops",
-          changes: { assigneeId: { to: "user-1" } },
+          assigneeId: "user-1",
         },
+        updatedFrom: { assigneeId: null },
         createdAt: new Date().toISOString(),
       };
 
@@ -446,8 +732,9 @@ describe("event-router", () => {
         data: {
           id: "issue-1",
           team: { key: "ENG" },
-          changes: { assigneeId: { to: "user-1" } },
+          assigneeId: "user-1",
         },
+        updatedFrom: { assigneeId: null },
         createdAt: new Date().toISOString(),
       };
 
@@ -464,10 +751,8 @@ describe("event-router", () => {
       const event: LinearWebhookPayload = {
         type: "Issue",
         action: "update",
-        data: {
-          id: "issue-1",
-          changes: { assigneeId: { to: "user-1" } },
-        },
+        data: { id: "issue-1", assigneeId: "user-1" },
+        updatedFrom: { assigneeId: null },
         createdAt: new Date().toISOString(),
       };
 

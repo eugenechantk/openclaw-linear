@@ -11,6 +11,10 @@ const EVENT_LABELS: Record<string, string> = {
   "issue.assigned": "Assigned",
   "issue.unassigned": "Unassigned",
   "issue.reassigned": "Reassigned",
+  "issue.removed": "Removed",
+  "issue.completed": "Completed",
+  "issue.canceled": "Canceled",
+  "issue.priority_changed": "Priority Changed",
   "comment.mention": "Mentioned",
 };
 
@@ -181,6 +185,23 @@ export function activate(api: OpenClawPluginApi): void {
         if (action.type === "wake") {
           activeDebouncerKeys.add(action.agentId);
           debouncer.enqueue(action);
+        }
+
+        if (action.type === "notify") {
+          queue
+            .enqueue([
+              {
+                id: action.identifier,
+                event: action.event,
+                summary: action.issueLabel,
+                issuePriority: action.issuePriority,
+              },
+            ])
+            .catch((err) =>
+              api.logger.error(
+                `[linear] Notify enqueue error: ${err instanceof Error ? err.message : String(err)}`,
+              ),
+            );
         }
       }
     },

@@ -23,9 +23,16 @@ export interface QueueItem {
 
 export const QUEUE_EVENT: Record<string, string> = {
   "issue.assigned": "ticket",
-  "issue.reassigned": "ticket",
   "comment.mention": "mention",
 };
+
+const REMOVAL_EVENTS = new Set([
+  "issue.unassigned",
+  "issue.reassigned",
+  "issue.removed",
+  "issue.completed",
+  "issue.canceled",
+]);
 
 export interface EnqueueEntry {
   id: string;
@@ -124,21 +131,42 @@ export class InboxQueue {
     try {
       const existing = readJsonl(this.path);
 
-      // Handle unassign removals — remove existing ticket items for unassigned issues
-      const unassignIds = new Set(
+      // Handle removal events — remove existing ticket items for affected issues
+      const removalIds = new Set(
         entries
-          .filter((e) => e.event === "issue.unassigned")
+          .filter((e) => REMOVAL_EVENTS.has(e.event))
           .map((e) => e.id),
       );
 
+      // Handle priority updates — update matching items' priority in-place
+      const priorityUpdates = new Map(
+        entries
+          .filter((e) => e.event === "issue.priority_changed")
+          .map((e) => [e.id, mapPriority(e.issuePriority)]),
+      );
+
       let filtered = existing;
-      if (unassignIds.size > 0) {
+      let dirty = false;
+
+      if (removalIds.size > 0) {
         filtered = existing.filter(
-          (item) => !(unassignIds.has(item.issueId) && item.event === "ticket"),
+          (item) => !(removalIds.has(item.issueId) && item.event === "ticket"),
         );
-        if (filtered.length !== existing.length) {
-          writeJsonl(this.path, filtered);
+        if (filtered.length !== existing.length) dirty = true;
+      }
+
+      if (priorityUpdates.size > 0) {
+        for (const item of filtered) {
+          const newPriority = priorityUpdates.get(item.issueId);
+          if (newPriority !== undefined && item.priority !== newPriority) {
+            item.priority = newPriority;
+            dirty = true;
+          }
         }
+      }
+
+      if (dirty) {
+        writeJsonl(this.path, filtered);
       }
 
       // Build dedup set from remaining items using mapped queue events
@@ -151,7 +179,7 @@ export class InboxQueue {
 
       for (const entry of entries) {
         const queueEvent = QUEUE_EVENT[entry.event];
-        if (!queueEvent) continue; // skip unmapped events (e.g. issue.unassigned)
+        if (!queueEvent) continue; // skip unmapped events
 
         const dedupKey = `${entry.id}:${queueEvent}`;
         if (existingKeys.has(dedupKey)) continue;

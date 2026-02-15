@@ -109,12 +109,11 @@ describe("InboxQueue.enqueue", () => {
     await queue.enqueue([
       entry("ENG-10", "comment.mention", "hey", 3),
       entry("ENG-11", "issue.assigned", "urgent fix", 1),
-      entry("ENG-12", "issue.reassigned", "medium task", 3),
     ]);
     const items = readItems();
-    expect(items).toHaveLength(3);
-    expect(items.map((i) => i.event)).toEqual(["mention", "ticket", "ticket"]);
-    expect(items.map((i) => i.priority)).toEqual([3, 1, 3]);
+    expect(items).toHaveLength(2);
+    expect(items.map((i) => i.event)).toEqual(["mention", "ticket"]);
+    expect(items.map((i) => i.priority)).toEqual([3, 1]);
   });
 });
 
@@ -131,12 +130,11 @@ describe("InboxQueue.peek", () => {
     await queue.enqueue([
       entry("ENG-10", "comment.mention", "hey", 4),
       entry("ENG-11", "issue.assigned", "urgent fix", 1),
-      entry("ENG-12", "issue.reassigned", "medium task", 3),
     ]);
 
     const items = await queue.peek();
-    expect(items.map((i) => i.id)).toEqual(["ENG-11", "ENG-12", "ENG-10"]);
-    expect(items.map((i) => i.priority)).toEqual([1, 3, 4]);
+    expect(items.map((i) => i.id)).toEqual(["ENG-11", "ENG-10"]);
+    expect(items.map((i) => i.priority)).toEqual([1, 4]);
   });
 
   it("does not remove items", async () => {
@@ -180,7 +178,7 @@ describe("InboxQueue.pop", () => {
     await queue.enqueue([
       entry("ENG-10", "comment.mention", "hey", 4),
       entry("ENG-11", "issue.assigned", "urgent fix", 1),
-      entry("ENG-12", "issue.reassigned", "medium task", 3),
+      entry("ENG-12", "issue.assigned", "medium task", 3),
     ]);
 
     expect((await queue.pop())!.id).toBe("ENG-11");
@@ -214,15 +212,51 @@ describe("InboxQueue.drain", () => {
   });
 });
 
-// --- Unassign removal ---
+// --- Removal events ---
 
-describe("InboxQueue unassign removal", () => {
-  it("removes existing ticket for same issue", async () => {
+describe("InboxQueue removal events", () => {
+  it("removes existing ticket on issue.unassigned", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
     await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
     expect(readItems()).toHaveLength(1);
 
     const added = await queue.enqueue([entry("ENG-42", "issue.unassigned", "Fix login bug", 2)]);
+    expect(added).toBe(0);
+    expect(readItems()).toHaveLength(0);
+  });
+
+  it("removes existing ticket on issue.reassigned", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
+
+    const added = await queue.enqueue([entry("ENG-42", "issue.reassigned", "Fix login bug", 2)]);
+    expect(added).toBe(0);
+    expect(readItems()).toHaveLength(0);
+  });
+
+  it("removes existing ticket on issue.removed", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
+
+    const added = await queue.enqueue([entry("ENG-42", "issue.removed", "Fix login bug", 2)]);
+    expect(added).toBe(0);
+    expect(readItems()).toHaveLength(0);
+  });
+
+  it("removes existing ticket on issue.completed", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
+
+    const added = await queue.enqueue([entry("ENG-42", "issue.completed", "Fix login bug", 2)]);
+    expect(added).toBe(0);
+    expect(readItems()).toHaveLength(0);
+  });
+
+  it("removes existing ticket on issue.canceled", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
+
+    const added = await queue.enqueue([entry("ENG-42", "issue.canceled", "Fix login bug", 2)]);
     expect(added).toBe(0);
     expect(readItems()).toHaveLength(0);
   });
@@ -259,17 +293,37 @@ describe("InboxQueue unassign removal", () => {
   });
 });
 
-// --- Reassigned dedup ---
+// --- Priority update ---
 
-describe("InboxQueue reassigned dedup", () => {
-  it("deduplicates reassigned against existing ticket from assigned", async () => {
+describe("InboxQueue priority update", () => {
+  it("updates priority in-place for matching items", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
-    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
-    const added = await queue.enqueue([entry("ENG-42", "issue.reassigned", "Fix login bug", 2)]);
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 3)]);
+    expect(readItems()[0].priority).toBe(3);
+
+    const added = await queue.enqueue([entry("ENG-42", "issue.priority_changed", "Fix login bug", 1)]);
     expect(added).toBe(0);
     const items = readItems();
     expect(items).toHaveLength(1);
-    expect(items[0].event).toBe("ticket");
+    expect(items[0].priority).toBe(1);
+  });
+
+  it("maps no-priority (0) to 5 on update", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
+
+    await queue.enqueue([entry("ENG-42", "issue.priority_changed", "Fix login bug", 0)]);
+    expect(readItems()[0].priority).toBe(5);
+  });
+
+  it("is a no-op when issue is not in queue", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([entry("ENG-42", "issue.assigned", "Fix login bug", 2)]);
+
+    await queue.enqueue([entry("ENG-99", "issue.priority_changed", "Other", 1)]);
+    const items = readItems();
+    expect(items).toHaveLength(1);
+    expect(items[0].priority).toBe(2);
   });
 });
 
@@ -278,8 +332,8 @@ describe("InboxQueue reassigned dedup", () => {
 describe("QUEUE_EVENT mapping", () => {
   it("maps raw events to queue events", () => {
     expect(QUEUE_EVENT["issue.assigned"]).toBe("ticket");
-    expect(QUEUE_EVENT["issue.reassigned"]).toBe("ticket");
     expect(QUEUE_EVENT["comment.mention"]).toBe("mention");
+    expect(QUEUE_EVENT["issue.reassigned"]).toBeUndefined();
     expect(QUEUE_EVENT["issue.unassigned"]).toBeUndefined();
   });
 });
