@@ -1,7 +1,8 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { createWebhookHandler } from "./webhook-handler.js";
 import { createEventRouter, type RouterAction } from "./event-router.js";
-import { handleIntake, handleRecovery } from "./work-queue.js";
+import { InboxQueue } from "./work-queue.js";
+import { createQueueTool } from "./queue-tool.js";
 
 const CHANNEL_ID = "linear";
 const DEFAULT_DEBOUNCE_MS = 30_000;
@@ -42,7 +43,7 @@ function formatActionSummary(action: RouterAction): string {
 async function dispatchConsolidatedActions(
   actions: RouterAction[],
   api: OpenClawPluginApi,
-  queuePath: string,
+  queue: InboxQueue,
 ): Promise<void> {
   if (actions.length === 0) return;
 
@@ -63,15 +64,15 @@ async function dispatchConsolidatedActions(
 
   // Write to queue deterministically — no LLM involved
   const rawBody = formatConsolidatedMessage(actions);
-  const added = handleIntake(rawBody, queuePath);
+  const added = await queue.enqueue(rawBody);
 
   if (added === 0) {
     api.logger.info("[linear] All notifications deduped — skipping agent dispatch");
     return;
   }
 
-  // Agent gets a minimal notification pointing to the queue
-  const body = `${added} new Linear notification(s) queued. Pending items in queue/work-queue.json.`;
+  // Agent gets a minimal notification pointing to the linear_queue tool
+  const body = `${added} new Linear notification(s) queued. Use the linear_queue tool to process them.`;
 
   const ctx = core.channel.reply.finalizeInboundContext({
     Body: body,
@@ -135,15 +136,10 @@ export function activate(api: OpenClawPluginApi): void {
       ? rawDebounceMs
       : DEFAULT_DEBOUNCE_MS;
 
-  const queuePath = api.resolvePath("queue/work-queue.json");
+  const queuePath = api.resolvePath("queue/inbox.jsonl");
+  const queue = new InboxQueue(queuePath);
 
-  // Reset stale in_progress items on gateway startup
-  api.on("gateway_start", () => {
-    const recovered = handleRecovery(queuePath);
-    if (recovered > 0) {
-      api.logger.info(`[linear] Recovered ${recovered} stale queue item(s)`);
-    }
-  });
+  api.registerTool(createQueueTool(queue));
 
   const route = createEventRouter({
     agentMapping,
@@ -157,7 +153,7 @@ export function activate(api: OpenClawPluginApi): void {
     buildKey: (action) => action.agentId,
     shouldDebounce: () => true,
     onFlush: async (actions) => {
-      await dispatchConsolidatedActions(actions, api, queuePath);
+      await dispatchConsolidatedActions(actions, api, queue);
     },
     onError: (err) => {
       api.logger.error(

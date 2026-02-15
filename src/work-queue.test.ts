@@ -1,39 +1,25 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   parseNotificationMessage,
-  readQueue,
-  writeQueue,
-  handleIntake,
-  handleRecovery,
-  cleanupDoneItems,
-  type WorkQueue,
+  InboxQueue,
   type QueueItem,
 } from "./work-queue.js";
 
 const TMP_DIR = join(import.meta.dirname ?? __dirname, "../.test-tmp");
-const QUEUE_PATH = join(TMP_DIR, "queue", "work-queue.json");
+const QUEUE_PATH = join(TMP_DIR, "queue", "inbox.jsonl");
 
-function seedQueue(items: QueueItem[]): void {
-  const dir = join(TMP_DIR, "queue");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(QUEUE_PATH, JSON.stringify({ items }, null, 2) + "\n");
-}
-
-function makeItem(overrides: Partial<QueueItem> = {}): QueueItem {
-  return {
-    id: "ENG-1",
-    issueId: "ENG-1",
-    event: "issue.assigned",
-    summary: "Test item",
-    status: "pending",
-    priority: 1,
-    addedAt: new Date().toISOString(),
-    startedAt: null,
-    completedAt: null,
-    ...overrides,
-  };
+function readItems(): QueueItem[] {
+  try {
+    const content = readFileSync(QUEUE_PATH, "utf-8");
+    return content
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as QueueItem);
+  } catch {
+    return [];
+  }
 }
 
 beforeEach(() => {
@@ -109,100 +95,62 @@ describe("parseNotificationMessage", () => {
   });
 });
 
-// --- readQueue / writeQueue ---
+// --- InboxQueue.enqueue ---
 
-describe("readQueue", () => {
-  it("returns empty queue when file does not exist", () => {
-    expect(readQueue(QUEUE_PATH)).toEqual({ items: [] });
-  });
-
-  it("reads existing queue file", () => {
-    const items = [makeItem()];
-    seedQueue(items);
-    const queue = readQueue(QUEUE_PATH);
-    expect(queue.items).toHaveLength(1);
-    expect(queue.items[0].id).toBe("ENG-1");
-  });
-
-  it("returns empty queue for corrupted JSON", () => {
-    mkdirSync(join(TMP_DIR, "queue"), { recursive: true });
-    writeFileSync(QUEUE_PATH, "not json {{{");
-    expect(readQueue(QUEUE_PATH)).toEqual({ items: [] });
-  });
-});
-
-describe("writeQueue", () => {
-  it("creates parent directories and writes queue", () => {
-    const queue: WorkQueue = { items: [makeItem()] };
-    writeQueue(QUEUE_PATH, queue);
-    const data = JSON.parse(readFileSync(QUEUE_PATH, "utf-8"));
-    expect(data.items).toHaveLength(1);
-    expect(data.items[0].id).toBe("ENG-1");
-  });
-
-  it("overwrites existing queue file", () => {
-    seedQueue([makeItem({ id: "OLD-1", issueId: "OLD-1" })]);
-    writeQueue(QUEUE_PATH, { items: [makeItem({ id: "NEW-1", issueId: "NEW-1" })] });
-    const data = JSON.parse(readFileSync(QUEUE_PATH, "utf-8"));
-    expect(data.items).toHaveLength(1);
-    expect(data.items[0].id).toBe("NEW-1");
-  });
-});
-
-// --- handleIntake ---
-
-describe("handleIntake", () => {
-  it("adds parsed items to empty queue", () => {
-    const added = handleIntake("Assigned to issue ENG-42: Fix login bug", QUEUE_PATH);
+describe("InboxQueue.enqueue", () => {
+  it("adds parsed items to empty queue", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    const added = await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
     expect(added).toBe(1);
-    const queue = readQueue(QUEUE_PATH);
-    expect(queue.items).toHaveLength(1);
-    expect(queue.items[0]).toMatchObject({
+    const items = readItems();
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
       id: "ENG-42",
       event: "issue.assigned",
       summary: "Fix login bug",
-      status: "pending",
       priority: 1,
     });
   });
 
-  it("deduplicates against existing pending items", () => {
-    seedQueue([makeItem({ id: "ENG-42", issueId: "ENG-42", event: "issue.assigned" })]);
-    const added = handleIntake("Assigned to issue ENG-42: Fix login bug", QUEUE_PATH);
+  it("deduplicates against existing items", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
+    const added = await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
     expect(added).toBe(0);
-    expect(readQueue(QUEUE_PATH).items).toHaveLength(1);
+    expect(readItems()).toHaveLength(1);
   });
 
-  it("deduplicates against existing in_progress items", () => {
-    seedQueue([makeItem({ id: "ENG-42", issueId: "ENG-42", event: "issue.assigned", status: "in_progress" })]);
-    const added = handleIntake("Assigned to issue ENG-42: Fix login bug", QUEUE_PATH);
-    expect(added).toBe(0);
-  });
-
-  it("allows re-queue after item is done", () => {
-    seedQueue([makeItem({
-      id: "ENG-42",
-      issueId: "ENG-42",
-      event: "issue.assigned",
-      status: "done",
-      completedAt: new Date().toISOString(),
-    })]);
-    const added = handleIntake("Assigned to issue ENG-42: Fix login bug", QUEUE_PATH);
-    expect(added).toBe(1);
-    const queue = readQueue(QUEUE_PATH);
-    // done item + new pending item
-    expect(queue.items.filter((i) => i.id === "ENG-42")).toHaveLength(2);
-  });
-
-  it("allows same issue with different events", () => {
-    seedQueue([makeItem({ id: "ENG-42", issueId: "ENG-42", event: "issue.assigned" })]);
+  it("allows same issue with different events", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
     const msg = "Mentioned in comment on issue ENG-42: Fix login bug\n\n> thoughts?";
-    const added = handleIntake(msg, QUEUE_PATH);
+    const added = await queue.enqueue(msg);
     expect(added).toBe(1);
-    expect(readQueue(QUEUE_PATH).items).toHaveLength(2);
+    expect(readItems()).toHaveLength(2);
   });
 
-  it("sorts by priority after intake", () => {
+  it("deduplicates within the same batch", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    const message = [
+      "You have 2 new Linear notifications:",
+      "",
+      "1. [Assigned] ENG-42: Fix login bug",
+      "2. [Assigned] ENG-42: Fix login bug",
+      "",
+      "Review and prioritize before starting work.",
+    ].join("\n");
+
+    const added = await queue.enqueue(message);
+    expect(added).toBe(1);
+  });
+
+  it("returns 0 for unrecognized message", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    expect(await queue.enqueue("Hello world")).toBe(0);
+  });
+
+  it("enqueues multiple items with correct priorities", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
     const message = [
       "You have 3 new Linear notifications:",
       "",
@@ -213,137 +161,160 @@ describe("handleIntake", () => {
       "Review and prioritize before starting work.",
     ].join("\n");
 
-    handleIntake(message, QUEUE_PATH);
-    const queue = readQueue(QUEUE_PATH);
-    expect(queue.items.map((i) => i.id)).toEqual(["ENG-11", "ENG-12", "ENG-10"]);
-    expect(queue.items.map((i) => i.priority)).toEqual([1, 2, 3]);
+    await queue.enqueue(message);
+    const items = readItems();
+    expect(items).toHaveLength(3);
+    expect(items.map((i) => i.priority)).toEqual([3, 1, 2]);
+  });
+});
+
+// --- InboxQueue.peek ---
+
+describe("InboxQueue.peek", () => {
+  it("returns empty array for empty queue", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    expect(await queue.peek()).toEqual([]);
   });
 
-  it("returns 0 for unrecognized message", () => {
-    expect(handleIntake("Hello world", QUEUE_PATH)).toBe(0);
-  });
-
-  it("deduplicates within the same batch", () => {
+  it("returns items sorted by priority", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
     const message = [
-      "You have 2 new Linear notifications:",
+      "You have 3 new Linear notifications:",
       "",
-      "1. [Assigned] ENG-42: Fix login bug",
-      "2. [Assigned] ENG-42: Fix login bug",
+      '1. [Mentioned] ENG-10: "hey"',
+      "2. [Assigned] ENG-11: urgent fix",
+      "3. [Reassigned] ENG-12: old task",
       "",
       "Review and prioritize before starting work.",
     ].join("\n");
+    await queue.enqueue(message);
 
-    const added = handleIntake(message, QUEUE_PATH);
-    expect(added).toBe(1);
+    const items = await queue.peek();
+    expect(items.map((i) => i.id)).toEqual(["ENG-11", "ENG-12", "ENG-10"]);
+    expect(items.map((i) => i.priority)).toEqual([1, 2, 3]);
   });
 
-  it("cleans up stale done items during intake", () => {
-    const staleDate = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(); // 25h ago
-    seedQueue([
-      makeItem({ id: "OLD-1", issueId: "OLD-1", status: "done", completedAt: staleDate }),
-      makeItem({ id: "ENG-99", issueId: "ENG-99", status: "pending" }),
-    ]);
-
-    handleIntake("Assigned to issue ENG-50: New task", QUEUE_PATH);
-    const queue = readQueue(QUEUE_PATH);
-    const ids = queue.items.map((i) => i.id);
-    expect(ids).not.toContain("OLD-1");
-    expect(ids).toContain("ENG-99");
-    expect(ids).toContain("ENG-50");
+  it("does not remove items", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
+    await queue.peek();
+    await queue.peek();
+    expect(readItems()).toHaveLength(1);
   });
 });
 
-// --- handleRecovery ---
+// --- InboxQueue.pop ---
 
-describe("handleRecovery", () => {
-  it("returns 0 when queue file does not exist", () => {
-    expect(handleRecovery(QUEUE_PATH)).toBe(0);
+describe("InboxQueue.pop", () => {
+  it("returns null for empty queue", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    expect(await queue.pop()).toBeNull();
   });
 
-  it("returns 0 when no items are in_progress", () => {
-    seedQueue([makeItem({ status: "pending" }), makeItem({ id: "ENG-2", issueId: "ENG-2", status: "done" })]);
-    expect(handleRecovery(QUEUE_PATH)).toBe(0);
+  it("removes and returns highest-priority item", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    const message = [
+      "You have 2 new Linear notifications:",
+      "",
+      '1. [Mentioned] ENG-10: "hey"',
+      "2. [Assigned] ENG-11: urgent fix",
+      "",
+      "Review and prioritize before starting work.",
+    ].join("\n");
+    await queue.enqueue(message);
+
+    const item = await queue.pop();
+    expect(item!.id).toBe("ENG-11");
+    expect(item!.priority).toBe(1);
+
+    // Only the mention remains
+    const remaining = readItems();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).toBe("ENG-10");
   });
 
-  it("resets in_progress items to pending", () => {
-    const startedAt = new Date().toISOString();
-    seedQueue([
-      makeItem({ id: "ENG-1", issueId: "ENG-1", status: "in_progress", startedAt }),
-      makeItem({ id: "ENG-2", issueId: "ENG-2", status: "pending" }),
-      makeItem({ id: "ENG-3", issueId: "ENG-3", status: "in_progress", startedAt }),
-    ]);
+  it("returns items in priority order across multiple pops", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    const message = [
+      "You have 3 new Linear notifications:",
+      "",
+      '1. [Mentioned] ENG-10: "hey"',
+      "2. [Assigned] ENG-11: urgent fix",
+      "3. [Reassigned] ENG-12: old task",
+      "",
+      "Review and prioritize before starting work.",
+    ].join("\n");
+    await queue.enqueue(message);
 
-    const recovered = handleRecovery(QUEUE_PATH);
-    expect(recovered).toBe(2);
-
-    const queue = readQueue(QUEUE_PATH);
-    for (const item of queue.items) {
-      expect(item.status).not.toBe("in_progress");
-      expect(item.startedAt).toBeNull();
-    }
-  });
-
-  it("returns 0 for corrupted JSON", () => {
-    mkdirSync(join(TMP_DIR, "queue"), { recursive: true });
-    writeFileSync(QUEUE_PATH, "corrupted");
-    expect(handleRecovery(QUEUE_PATH)).toBe(0);
-  });
-
-  it("returns 0 for empty items array", () => {
-    seedQueue([]);
-    expect(handleRecovery(QUEUE_PATH)).toBe(0);
+    expect((await queue.pop())!.id).toBe("ENG-11");
+    expect((await queue.pop())!.id).toBe("ENG-12");
+    expect((await queue.pop())!.id).toBe("ENG-10");
+    expect(await queue.pop()).toBeNull();
   });
 });
 
-// --- cleanupDoneItems ---
+// --- InboxQueue.drain ---
 
-describe("cleanupDoneItems", () => {
-  it("removes done items older than maxAge", () => {
-    const old = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-    const recent = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
-    const queue: WorkQueue = {
-      items: [
-        makeItem({ id: "OLD", issueId: "OLD", status: "done", completedAt: old }),
-        makeItem({ id: "RECENT", issueId: "RECENT", status: "done", completedAt: recent }),
-        makeItem({ id: "PENDING", issueId: "PENDING", status: "pending" }),
-      ],
-    };
-
-    const purged = cleanupDoneItems(queue);
-    expect(purged).toBe(1);
-    expect(queue.items.map((i) => i.id)).toEqual(["RECENT", "PENDING"]);
+describe("InboxQueue.drain", () => {
+  it("returns empty array for empty queue", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    expect(await queue.drain()).toEqual([]);
   });
 
-  it("removes done items with null completedAt", () => {
-    const queue: WorkQueue = {
-      items: [
-        makeItem({ id: "BAD", issueId: "BAD", status: "done", completedAt: null }),
-      ],
-    };
-    const purged = cleanupDoneItems(queue);
-    expect(purged).toBe(1);
-    expect(queue.items).toHaveLength(0);
+  it("removes and returns all items sorted by priority", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    const message = [
+      "You have 2 new Linear notifications:",
+      "",
+      '1. [Mentioned] ENG-10: "hey"',
+      "2. [Assigned] ENG-11: urgent fix",
+      "",
+      "Review and prioritize before starting work.",
+    ].join("\n");
+    await queue.enqueue(message);
+
+    const items = await queue.drain();
+    expect(items.map((i) => i.id)).toEqual(["ENG-11", "ENG-10"]);
+
+    // Queue is now empty
+    expect(readItems()).toHaveLength(0);
+    expect(await queue.peek()).toEqual([]);
+  });
+});
+
+// --- Mutex serialization ---
+
+describe("InboxQueue mutex serialization", () => {
+  it("serializes concurrent enqueue calls", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+
+    // Fire two enqueues concurrently — both should complete without data loss
+    const [a, b] = await Promise.all([
+      queue.enqueue("Assigned to issue ENG-1: Task one"),
+      queue.enqueue("Assigned to issue ENG-2: Task two"),
+    ]);
+
+    expect(a + b).toBe(2);
+    const items = readItems();
+    expect(items).toHaveLength(2);
+    const ids = items.map((i) => i.id).sort();
+    expect(ids).toEqual(["ENG-1", "ENG-2"]);
   });
 
-  it("keeps all items when none are done", () => {
-    const queue: WorkQueue = {
-      items: [
-        makeItem({ id: "A", issueId: "A", status: "pending" }),
-        makeItem({ id: "B", issueId: "B", status: "in_progress" }),
-      ],
-    };
-    expect(cleanupDoneItems(queue)).toBe(0);
-    expect(queue.items).toHaveLength(2);
-  });
+  it("serializes concurrent pop calls", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue("Assigned to issue ENG-1: Task one");
+    await queue.enqueue("Assigned to issue ENG-2: Task two");
 
-  it("respects custom maxAgeMs", () => {
-    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-    const queue: WorkQueue = {
-      items: [
-        makeItem({ id: "A", issueId: "A", status: "done", completedAt: fiveMinAgo }),
-      ],
-    };
-    // 1 minute max age — should purge
-    expect(cleanupDoneItems(queue, 60 * 1000)).toBe(1);
+    const [a, b] = await Promise.all([queue.pop(), queue.pop()]);
+    const results = [a, b].filter(Boolean);
+    expect(results).toHaveLength(2);
+
+    // Each item popped exactly once
+    const ids = results.map((r) => r!.id).sort();
+    expect(ids).toEqual(["ENG-1", "ENG-2"]);
+
+    // Queue is now empty
+    expect(await queue.pop()).toBeNull();
   });
 });

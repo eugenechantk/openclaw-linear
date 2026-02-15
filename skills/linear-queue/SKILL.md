@@ -6,7 +6,15 @@ metadata: { "openclaw": { "always": true } }
 
 # Linear Work Queue
 
-You have a work queue at `queue/work-queue.json` containing Linear notifications that need your attention. The queue is the source of truth — don't parse raw notification messages yourself.
+You have a `linear_queue` tool for managing Linear notifications that need your attention. The tool is the source of truth — don't parse raw notification messages yourself.
+
+## Tool actions
+
+| Action | Effect |
+|---|---|
+| `peek` | View all pending items sorted by priority. Non-destructive. |
+| `pop` | Remove and return the highest-priority item. |
+| `drain` | Remove and return all items sorted by priority. |
 
 ## Queue item structure
 
@@ -16,11 +24,8 @@ You have a work queue at `queue/work-queue.json` containing Linear notifications
   "issueId": "TEAM-123",
   "event": "issue.assigned",
   "summary": "Issue title or comment text",
-  "status": "pending",
   "priority": 1,
-  "addedAt": "ISO timestamp",
-  "startedAt": null,
-  "completedAt": null
+  "addedAt": "ISO timestamp"
 }
 ```
 
@@ -35,14 +40,8 @@ You have a work queue at `queue/work-queue.json` containing Linear notifications
 
 ## Processing workflow
 
-1. **Read** the queue file (`queue/work-queue.json`).
-2. **Skip** if there are no `pending` items.
-3. **Pick** the highest-priority `pending` item (lowest priority number first; break ties by `addedAt`, oldest first).
-4. **Mark `in_progress`**: set `status` to `"in_progress"` and `startedAt` to the current ISO timestamp. Write the queue back to disk.
-5. **Act**: use the Linear tools (list-issues, update-issue, add-comment) to handle the item per the event type table above.
-6. **Mark `done`**: set `status` to `"done"` and `completedAt` to the current ISO timestamp. Write the queue back to disk.
-7. **Repeat** from step 1 until no `pending` items remain.
-
-## File update rules
-
-Always do atomic read-modify-write cycles: read the full file, modify the target item in memory, write the entire file back. Never partially update the file.
+1. **Peek** the queue with `linear_queue { action: "peek" }` to see all pending items.
+2. **Skip** if there are no items.
+3. **Pop** the next item with `linear_queue { action: "pop" }`.
+4. **Act**: use the Linear tools (list-issues, update-issue, add-comment) to handle the item per the event type table above.
+5. **Repeat** from step 3 until pop returns null.

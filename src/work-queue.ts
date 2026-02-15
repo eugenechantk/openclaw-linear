@@ -8,6 +8,7 @@ import {
   closeSync,
   unlinkSync,
   renameSync,
+  appendFileSync,
 } from "node:fs";
 import { dirname } from "node:path";
 
@@ -16,18 +17,11 @@ export interface QueueItem {
   issueId: string;
   event: string;
   summary: string;
-  status: "pending" | "in_progress" | "done";
   priority: number;
   addedAt: string;
-  startedAt: string | null;
-  completedAt: string | null;
 }
 
-export interface WorkQueue {
-  items: QueueItem[];
-}
-
-const EVENT_PRIORITY: Record<string, number> = {
+export const EVENT_PRIORITY: Record<string, number> = {
   "issue.assigned": 1,
   "issue.reassigned": 2,
   "comment.mention": 3,
@@ -139,23 +133,51 @@ export function parseNotificationMessage(
   return results;
 }
 
-// --- File I/O ---
+// --- Mutex ---
 
-export function readQueue(queuePath: string): WorkQueue {
-  if (!existsSync(queuePath)) return { items: [] };
-  try {
-    return JSON.parse(readFileSync(queuePath, "utf-8")) as WorkQueue;
-  } catch {
-    return { items: [] };
+export class Mutex {
+  private _lock: Promise<void> = Promise.resolve();
+
+  async acquire(): Promise<() => void> {
+    let release!: () => void;
+    const next = new Promise<void>((r) => {
+      release = r;
+    });
+    const prev = this._lock;
+    this._lock = next;
+    await prev;
+    return release;
   }
 }
 
-export function writeQueue(queuePath: string, queue: WorkQueue): void {
-  const dir = dirname(queuePath);
+// --- InboxQueue ---
+
+function readJsonl(path: string): QueueItem[] {
+  if (!existsSync(path)) return [];
+  try {
+    const content = readFileSync(path, "utf-8");
+    const items: QueueItem[] = [];
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        items.push(JSON.parse(trimmed) as QueueItem);
+      } catch {
+        // skip malformed lines
+      }
+    }
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+function writeJsonl(path: string, items: QueueItem[]): void {
+  const dir = dirname(path);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-  const tmpPath = `${queuePath}.tmp.${process.pid}.${Date.now()}`;
-  const content = JSON.stringify(queue, null, 2) + "\n";
+  const tmpPath = `${path}.tmp.${process.pid}.${Date.now()}`;
+  const content = items.map((item) => JSON.stringify(item)).join("\n") + (items.length ? "\n" : "");
   try {
     const fd = openSync(tmpPath, "w");
     try {
@@ -164,7 +186,7 @@ export function writeQueue(queuePath: string, queue: WorkQueue): void {
     } finally {
       closeSync(fd);
     }
-    renameSync(tmpPath, queuePath);
+    renameSync(tmpPath, path);
   } catch (err) {
     try {
       unlinkSync(tmpPath);
@@ -175,111 +197,98 @@ export function writeQueue(queuePath: string, queue: WorkQueue): void {
   }
 }
 
-// --- Intake ---
+function appendJsonl(path: string, items: QueueItem[]): void {
+  const dir = dirname(path);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-/**
- * Parse a consolidated notification message and append new items to the work queue.
- * Deduplicates against non-done items only (completed items can be re-queued).
- * Returns the number of new items added.
- */
-export function handleIntake(message: string, queuePath: string): number {
-  const parsed = parseNotificationMessage(message);
-  if (parsed.length === 0) return 0;
-
-  const queue = readQueue(queuePath);
-
-  // Only dedup against non-done items so re-assignments after completion work
-  const existingKeys = new Set(
-    queue.items
-      .filter((item) => item.status !== "done")
-      .map((item) => `${item.issueId ?? item.id}:${item.event}`),
-  );
-
-  let added = 0;
-  const now = new Date().toISOString();
-
-  for (const entry of parsed) {
-    const dedupKey = `${entry.id}:${entry.event}`;
-    if (existingKeys.has(dedupKey)) continue;
-
-    queue.items.push({
-      id: entry.id,
-      issueId: entry.id,
-      event: entry.event,
-      summary: entry.summary,
-      status: "pending",
-      priority: EVENT_PRIORITY[entry.event] ?? 5,
-      addedAt: now,
-      startedAt: null,
-      completedAt: null,
-    });
-    existingKeys.add(dedupKey);
-    added++;
-  }
-
-  if (added > 0) {
-    cleanupDoneItems(queue);
-    queue.items.sort((a, b) => a.priority - b.priority);
-    writeQueue(queuePath, queue);
-  }
-
-  return added;
+  const content = items.map((item) => JSON.stringify(item)).join("\n") + "\n";
+  appendFileSync(path, content, "utf-8");
 }
 
-// --- Recovery ---
+export class InboxQueue {
+  private readonly mutex = new Mutex();
 
-/**
- * Reset stale in_progress items to pending.
- * Called on gateway startup to recover from crashes/restarts.
- */
-export function handleRecovery(queuePath: string): number {
-  if (!existsSync(queuePath)) return 0;
+  constructor(private readonly path: string) {}
 
-  let queue: WorkQueue;
-  try {
-    queue = JSON.parse(readFileSync(queuePath, "utf-8")) as WorkQueue;
-  } catch {
-    return 0;
-  }
+  /** Parse a notification message, dedup, and append new items. Returns count added. */
+  async enqueue(message: string): Promise<number> {
+    const parsed = parseNotificationMessage(message);
+    if (parsed.length === 0) return 0;
 
-  if (!Array.isArray(queue.items) || queue.items.length === 0) return 0;
+    const release = await this.mutex.acquire();
+    try {
+      const existing = readJsonl(this.path);
+      const existingKeys = new Set(
+        existing.map((item) => `${item.issueId}:${item.event}`),
+      );
 
-  let recovered = 0;
-  for (const item of queue.items) {
-    if (item.status === "in_progress") {
-      item.status = "pending";
-      item.startedAt = null;
-      recovered++;
+      const newItems: QueueItem[] = [];
+      const now = new Date().toISOString();
+
+      for (const entry of parsed) {
+        const dedupKey = `${entry.id}:${entry.event}`;
+        if (existingKeys.has(dedupKey)) continue;
+
+        newItems.push({
+          id: entry.id,
+          issueId: entry.id,
+          event: entry.event,
+          summary: entry.summary,
+          priority: EVENT_PRIORITY[entry.event] ?? 5,
+          addedAt: now,
+        });
+        existingKeys.add(dedupKey);
+      }
+
+      if (newItems.length > 0) {
+        appendJsonl(this.path, newItems);
+      }
+
+      return newItems.length;
+    } finally {
+      release();
     }
   }
 
-  if (recovered > 0) {
-    writeQueue(queuePath, queue);
+  /** Return all items sorted by priority (lowest number first). Non-destructive. */
+  async peek(): Promise<QueueItem[]> {
+    const release = await this.mutex.acquire();
+    try {
+      const items = readJsonl(this.path);
+      return items.sort((a, b) => a.priority - b.priority || a.addedAt.localeCompare(b.addedAt));
+    } finally {
+      release();
+    }
   }
 
-  return recovered;
-}
+  /** Remove and return the highest-priority item, or null if empty. */
+  async pop(): Promise<QueueItem | null> {
+    const release = await this.mutex.acquire();
+    try {
+      const items = readJsonl(this.path);
+      if (items.length === 0) return null;
 
-// --- Cleanup ---
+      items.sort((a, b) => a.priority - b.priority || a.addedAt.localeCompare(b.addedAt));
+      const [popped, ...rest] = items;
+      writeJsonl(this.path, rest);
+      return popped;
+    } finally {
+      release();
+    }
+  }
 
-const DONE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+  /** Remove and return all items sorted by priority. */
+  async drain(): Promise<QueueItem[]> {
+    const release = await this.mutex.acquire();
+    try {
+      const items = readJsonl(this.path);
+      if (items.length === 0) return [];
 
-/**
- * Remove done items older than maxAgeMs from the queue.
- * Mutates the queue in place. Returns number of items purged.
- */
-export function cleanupDoneItems(
-  queue: WorkQueue,
-  maxAgeMs: number = DONE_MAX_AGE_MS,
-): number {
-  const cutoff = Date.now() - maxAgeMs;
-  const before = queue.items.length;
-  queue.items = queue.items.filter((item) => {
-    if (item.status !== "done") return true;
-    const completedAt = item.completedAt
-      ? new Date(item.completedAt).getTime()
-      : 0;
-    return completedAt > cutoff;
-  });
-  return before - queue.items.length;
+      items.sort((a, b) => a.priority - b.priority || a.addedAt.localeCompare(b.addedAt));
+      writeJsonl(this.path, []);
+      return items;
+    } finally {
+      release();
+    }
+  }
 }
