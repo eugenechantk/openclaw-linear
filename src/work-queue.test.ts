@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   parseNotificationMessage,
   InboxQueue,
+  QUEUE_EVENT,
   type QueueItem,
 } from "./work-queue.js";
 
@@ -106,7 +107,7 @@ describe("InboxQueue.enqueue", () => {
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
       id: "ENG-42",
-      event: "issue.assigned",
+      event: "ticket",
       summary: "Fix login bug",
       priority: 1,
     });
@@ -120,13 +121,15 @@ describe("InboxQueue.enqueue", () => {
     expect(readItems()).toHaveLength(1);
   });
 
-  it("allows same issue with different events", async () => {
+  it("allows same issue with different queue events", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
     await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
     const msg = "Mentioned in comment on issue ENG-42: Fix login bug\n\n> thoughts?";
     const added = await queue.enqueue(msg);
     expect(added).toBe(1);
-    expect(readItems()).toHaveLength(2);
+    const items = readItems();
+    expect(items).toHaveLength(2);
+    expect(items.map((i) => i.event)).toEqual(["ticket", "mention"]);
   });
 
   it("deduplicates within the same batch", async () => {
@@ -164,7 +167,9 @@ describe("InboxQueue.enqueue", () => {
     await queue.enqueue(message);
     const items = readItems();
     expect(items).toHaveLength(3);
-    expect(items.map((i) => i.priority)).toEqual([3, 1, 2]);
+    // mention=2, ticket=1, ticket=1
+    expect(items.map((i) => i.event)).toEqual(["mention", "ticket", "ticket"]);
+    expect(items.map((i) => i.priority)).toEqual([2, 1, 1]);
   });
 });
 
@@ -190,8 +195,9 @@ describe("InboxQueue.peek", () => {
     await queue.enqueue(message);
 
     const items = await queue.peek();
+    // Both assigned and reassigned map to ticket (priority 1), mention is priority 2
     expect(items.map((i) => i.id)).toEqual(["ENG-11", "ENG-12", "ENG-10"]);
-    expect(items.map((i) => i.priority)).toEqual([1, 2, 3]);
+    expect(items.map((i) => i.priority)).toEqual([1, 1, 2]);
   });
 
   it("does not remove items", async () => {
@@ -225,12 +231,14 @@ describe("InboxQueue.pop", () => {
 
     const item = await queue.pop();
     expect(item!.id).toBe("ENG-11");
+    expect(item!.event).toBe("ticket");
     expect(item!.priority).toBe(1);
 
     // Only the mention remains
     const remaining = readItems();
     expect(remaining).toHaveLength(1);
     expect(remaining[0].id).toBe("ENG-10");
+    expect(remaining[0].event).toBe("mention");
   });
 
   it("returns items in priority order across multiple pops", async () => {
@@ -279,6 +287,74 @@ describe("InboxQueue.drain", () => {
     // Queue is now empty
     expect(readItems()).toHaveLength(0);
     expect(await queue.peek()).toEqual([]);
+  });
+});
+
+// --- Unassign removal ---
+
+describe("InboxQueue unassign removal", () => {
+  it("removes existing ticket for same issue", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
+    expect(readItems()).toHaveLength(1);
+
+    const added = await queue.enqueue("Unassigned from issue ENG-42: Fix login bug");
+    expect(added).toBe(0);
+    expect(readItems()).toHaveLength(0);
+  });
+
+  it("is a no-op on empty queue", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    const added = await queue.enqueue("Unassigned from issue ENG-42: Fix login bug");
+    expect(added).toBe(0);
+    expect(readItems()).toHaveLength(0);
+  });
+
+  it("does not affect mention items for same issue", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue("Mentioned in comment on issue ENG-42: Fix login bug\n\n> hey");
+    expect(readItems()).toHaveLength(1);
+
+    await queue.enqueue("Unassigned from issue ENG-42: Fix login bug");
+    const items = readItems();
+    expect(items).toHaveLength(1);
+    expect(items[0].event).toBe("mention");
+  });
+
+  it("does not affect ticket items for different issues", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
+    await queue.enqueue("Assigned to issue ENG-43: Update docs");
+
+    await queue.enqueue("Unassigned from issue ENG-42: Fix login bug");
+    const items = readItems();
+    expect(items).toHaveLength(1);
+    expect(items[0].issueId).toBe("ENG-43");
+  });
+});
+
+// --- Reassigned dedup ---
+
+describe("InboxQueue reassigned dedup", () => {
+  it("deduplicates reassigned against existing ticket from assigned", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue("Assigned to issue ENG-42: Fix login bug");
+    const added = await queue.enqueue("Reassigned away from issue ENG-42: Fix login bug");
+    expect(added).toBe(0);
+    const items = readItems();
+    expect(items).toHaveLength(1);
+    expect(items[0].event).toBe("ticket");
+  });
+});
+
+// --- QUEUE_EVENT mapping ---
+
+describe("QUEUE_EVENT mapping", () => {
+  it("maps raw events to queue events", () => {
+    expect(QUEUE_EVENT["issue.assigned"]).toBe("ticket");
+    expect(QUEUE_EVENT["issue.reassigned"]).toBe("ticket");
+    expect(QUEUE_EVENT["comment.mention"]).toBe("mention");
+    expect(QUEUE_EVENT["issue.unassigned"]).toBeUndefined();
   });
 });
 

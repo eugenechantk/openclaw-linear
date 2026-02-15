@@ -22,7 +22,7 @@ You have a `linear_queue` tool for managing Linear notifications that need your 
 {
   "id": "TEAM-123",
   "issueId": "TEAM-123",
-  "event": "issue.assigned",
+  "event": "ticket",
   "summary": "Issue title or comment text",
   "priority": 1,
   "addedAt": "ISO timestamp"
@@ -33,10 +33,8 @@ You have a `linear_queue` tool for managing Linear notifications that need your 
 
 | Event | Priority | Action |
 |---|---|---|
-| `issue.assigned` | 1 | You've been assigned an issue. Read the issue details with the Linear tools, understand the requirements, and begin work. |
-| `issue.reassigned` | 2 | An issue was reassigned away from you. Acknowledge the change, stop any related work, and add a handoff comment if you have useful context. |
-| `comment.mention` | 3 | You were mentioned in a comment. Read the comment, understand what's being asked, and respond. |
-| `issue.unassigned` | 4 | You were unassigned from an issue. Acknowledge and stop any related work. |
+| `ticket` | 1 | You have a ticket to work on. Read issue details and begin work. |
+| `mention` | 2 | You were mentioned in a comment. Read and respond. |
 
 ## Processing workflow
 

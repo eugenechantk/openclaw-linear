@@ -22,10 +22,14 @@ export interface QueueItem {
 }
 
 export const EVENT_PRIORITY: Record<string, number> = {
-  "issue.assigned": 1,
-  "issue.reassigned": 2,
-  "comment.mention": 3,
-  "issue.unassigned": 4,
+  "ticket": 1,
+  "mention": 2,
+};
+
+export const QUEUE_EVENT: Record<string, string> = {
+  "issue.assigned": "ticket",
+  "issue.reassigned": "ticket",
+  "comment.mention": "mention",
 };
 
 // --- Parsing ---
@@ -218,23 +222,45 @@ export class InboxQueue {
     const release = await this.mutex.acquire();
     try {
       const existing = readJsonl(this.path);
+
+      // Handle unassign removals — remove existing ticket items for unassigned issues
+      const unassignIds = new Set(
+        parsed
+          .filter((e) => e.event === "issue.unassigned")
+          .map((e) => e.id),
+      );
+
+      let filtered = existing;
+      if (unassignIds.size > 0) {
+        filtered = existing.filter(
+          (item) => !(unassignIds.has(item.issueId) && item.event === "ticket"),
+        );
+        if (filtered.length !== existing.length) {
+          writeJsonl(this.path, filtered);
+        }
+      }
+
+      // Build dedup set from remaining items using mapped queue events
       const existingKeys = new Set(
-        existing.map((item) => `${item.issueId}:${item.event}`),
+        filtered.map((item) => `${item.issueId}:${item.event}`),
       );
 
       const newItems: QueueItem[] = [];
       const now = new Date().toISOString();
 
       for (const entry of parsed) {
-        const dedupKey = `${entry.id}:${entry.event}`;
+        const queueEvent = QUEUE_EVENT[entry.event];
+        if (!queueEvent) continue; // skip unmapped events (e.g. issue.unassigned)
+
+        const dedupKey = `${entry.id}:${queueEvent}`;
         if (existingKeys.has(dedupKey)) continue;
 
         newItems.push({
           id: entry.id,
           issueId: entry.id,
-          event: entry.event,
+          event: queueEvent,
           summary: entry.summary,
-          priority: EVENT_PRIORITY[entry.event] ?? 5,
+          priority: EVENT_PRIORITY[queueEvent] ?? 5,
           addedAt: now,
         });
         existingKeys.add(dedupKey);
