@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("./linear-cli.js", () => ({
+vi.mock("../src/linear-cli.js", () => ({
   execLinear: vi.fn(),
 }));
 
-const { execLinear } = await import("./linear-cli.js");
-const { createCommentListTool } = await import("./linear-comment-list-tool.js");
+const { execLinear } = await import("../src/linear-cli.js");
+const { createCommentListTool } = await import("../src/linear-comment-list-tool.js");
 
 const mockedExecLinear = vi.mocked(execLinear);
 

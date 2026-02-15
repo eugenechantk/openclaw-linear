@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("./linear-cli.js", () => ({
+vi.mock("../src/linear-cli.js", () => ({
   execLinear: vi.fn(),
   withTempFile: vi.fn(),
 }));
 
-const { execLinear, withTempFile } = await import("./linear-cli.js");
-const { createIssueCreateTool } = await import("./linear-issue-create-tool.js");
+const { execLinear, withTempFile } = await import("../src/linear-cli.js");
+const { createIssueCreateTool } = await import("../src/linear-issue-create-tool.js");
 
 const mockedExecLinear = vi.mocked(execLinear);
 const mockedWithTempFile = vi.mocked(withTempFile);

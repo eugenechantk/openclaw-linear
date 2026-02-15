@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createHmac } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { createWebhookHandler } from "./webhook-handler.js";
+import { createWebhookHandler } from "../src/webhook-handler.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 const SECRET = "test-webhook-secret";

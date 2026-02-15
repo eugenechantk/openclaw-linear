@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { formatConsolidatedMessage } from "./index.js";
-import type { RouterAction } from "./event-router.js";
+import { formatConsolidatedMessage } from "../src/index.js";
+import type { RouterAction } from "../src/event-router.js";
 
 function makeAction(overrides: Partial<RouterAction> = {}): RouterAction {
   return {

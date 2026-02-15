@@ -6,7 +6,7 @@ import {
   QUEUE_EVENT,
   type QueueItem,
   type EnqueueEntry,
-} from "./work-queue.js";
+} from "../src/work-queue.js";
 
 const TMP_DIR = join(import.meta.dirname ?? __dirname, "../.test-tmp");
 const QUEUE_PATH = join(TMP_DIR, "queue", "inbox.jsonl");

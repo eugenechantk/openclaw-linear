@@ -11,7 +11,7 @@ const mockedExecFile = vi.mocked(execFileCb);
 
 // Import after mocking
 const { execLinear, withTempFile, _resetBinaryCache } = await import(
-  "./linear-cli.js"
+  "../src/linear-cli.js"
 );
 
 beforeEach(() => {
