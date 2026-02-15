@@ -3,11 +3,12 @@ import { createWebhookHandler } from "./webhook-handler.js";
 import { createEventRouter, type RouterAction } from "./event-router.js";
 import { InboxQueue, type EnqueueEntry } from "./work-queue.js";
 import { createQueueTool } from "./queue-tool.js";
-import { createIssueViewTool } from "./linear-issue-view-tool.js";
-import { createCommentListTool } from "./linear-comment-list-tool.js";
-import { createCommentAddTool } from "./linear-comment-add-tool.js";
-import { createIssueUpdateTool } from "./linear-issue-update-tool.js";
-import { createIssueCreateTool } from "./linear-issue-create-tool.js";
+import { setApiKey } from "./linear-api.js";
+import { createIssueTool } from "./linear-issue-tool.js";
+import { createCommentTool } from "./linear-comment-tool.js";
+import { createTeamTool } from "./linear-team-tool.js";
+import { createProjectTool } from "./linear-project-tool.js";
+import { createRelationTool } from "./linear-relation-tool.js";
 
 const CHANNEL_ID = "linear";
 const DEFAULT_DEBOUNCE_MS = 30_000;
@@ -128,6 +129,13 @@ const activeDebouncerKeys = new Set<string>();
 export function activate(api: OpenClawPluginApi): void {
   api.logger.info("Linear plugin activated");
 
+  const linearApiKey = api.pluginConfig?.["apiKey"];
+  if (typeof linearApiKey !== "string" || !linearApiKey) {
+    api.logger.error("[linear] apiKey is not configured — plugin is inert");
+    return;
+  }
+  setApiKey(linearApiKey);
+
   const webhookSecret = api.pluginConfig?.["webhookSecret"];
   if (typeof webhookSecret !== "string" || !webhookSecret) {
     api.logger.error("[linear] webhookSecret is not configured — plugin is inert");
@@ -168,11 +176,11 @@ export function activate(api: OpenClawPluginApi): void {
   });
 
   api.registerTool(createQueueTool(queue));
-  api.registerTool(createIssueViewTool());
-  api.registerTool(createCommentListTool());
-  api.registerTool(createCommentAddTool());
-  api.registerTool(createIssueUpdateTool());
-  api.registerTool(createIssueCreateTool());
+  api.registerTool(createIssueTool());
+  api.registerTool(createCommentTool());
+  api.registerTool(createTeamTool());
+  api.registerTool(createProjectTool());
+  api.registerTool(createRelationTool());
 
   // Auto-wake: after a "complete" action, dispatch a fresh session if items remain
   api.on("after_tool_call", async (event) => {

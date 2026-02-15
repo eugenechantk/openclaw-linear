@@ -7,6 +7,11 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "apiKey": {
+        "type": "string",
+        "sensitive": true,
+        "description": "Linear API key for authentication (create at linear.app/settings/account/security)"
+      },
       "webhookSecret": {
         "type": "string",
         "sensitive": true,
@@ -37,6 +42,6 @@
         "description": "Map Linear state types or names to queue actions. Keys can be state types (triage, backlog, unstarted, started, completed, canceled) or state names (e.g. \"In Review\", \"Todo\"). Name matches take precedence over type matches (case-insensitive). Actions: add (re-add to queue), remove (remove from queue), ignore (do nothing). Defaults: backlog/unstarted=add, completed/canceled=remove, others=ignore."
       }
     },
-    "required": ["webhookSecret"]
+    "required": ["webhookSecret", "apiKey"]
   }
 }
