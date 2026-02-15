@@ -6,7 +6,9 @@ Linear webhook integration for OpenClaw. Receives Linear events, filters and rou
 
 - **Webhook handler** — receives Linear webhook events with HMAC signature verification (timing-safe), duplicate delivery detection, and body size limits
 - **Event router** — filters by team and event type, routes issue assignments and comment mentions to the configured agent
-- **Debounced dispatch** — batches events within a configurable window into a single consolidated message so the agent can triage before acting
+- **Debounced dispatch** — batches events within a configurable window before dispatching
+- **Work queue** — deterministic queue intake writes structured items to `queue/work-queue.json` with priority sorting, deduplication, and 24h auto-cleanup of completed items — no LLM tokens spent on triage
+- **Crash recovery** — resets stale `in_progress` queue items to `pending` on gateway startup
 
 ## Install
 
@@ -75,22 +77,50 @@ Linear webhook POST
   → Duplicate delivery check (10-min TTL, 10k cap)
   → Event router filters by team/type, matches user via agentMapping
   → wake actions enqueued into debouncer (keyed by agent ID)
-  → After debounce window expires, consolidated message dispatched to agent
+  → After debounce window expires:
+      → Notifications parsed and written to queue/work-queue.json (deterministic, no LLM)
+      → Deduped against existing non-done items — skips agent dispatch if nothing new
+      → Agent receives minimal message: "3 new Linear notification(s) queued."
 ```
 
-When multiple events arrive within the debounce window, the agent receives a single numbered message:
+## Work Queue
 
+The plugin writes structured items to `queue/work-queue.json`:
+
+```json
+{
+  "items": [
+    {
+      "id": "ENG-42",
+      "issueId": "ENG-42",
+      "event": "issue.assigned",
+      "summary": "Fix login bug",
+      "status": "pending",
+      "priority": 1,
+      "addedAt": "2026-02-14T15:45:00.000Z",
+      "startedAt": null,
+      "completedAt": null
+    }
+  ]
+}
 ```
-You have 3 new Linear notifications:
 
-1. [Assigned] ENG-42: Fix login bug
-2. [Assigned] ENG-43: Update API docs
-3. [Mentioned] ENG-40: Auth flow: "Can you review this?"
+### Priority
 
-Review and prioritize before starting work.
-```
+| Priority | Event |
+|----------|-------|
+| 1 | `issue.assigned` |
+| 2 | `issue.reassigned` |
+| 3 | `comment.mention` |
+| 4 | `issue.unassigned` |
 
-Single events are passed through as-is (no numbered wrapper).
+### Lifecycle
+
+Items progress through statuses: `pending` → `in_progress` → `done`.
+
+- **Deduplication** — keyed by `issueId + event`, only checked against non-done items. Completed items can be re-queued (e.g. re-assignment after completion).
+- **Cleanup** — done items older than 24 hours are purged automatically during intake.
+- **Recovery** — on gateway startup, any `in_progress` items are reset to `pending` to recover from crashes.
 
 ## Development
 
