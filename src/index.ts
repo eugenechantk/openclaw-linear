@@ -3,6 +3,11 @@ import { createWebhookHandler } from "./webhook-handler.js";
 import { createEventRouter, type RouterAction } from "./event-router.js";
 import { InboxQueue, type EnqueueEntry } from "./work-queue.js";
 import { createQueueTool } from "./queue-tool.js";
+import { createIssueViewTool } from "./linear-issue-view-tool.js";
+import { createCommentListTool } from "./linear-comment-list-tool.js";
+import { createCommentAddTool } from "./linear-comment-add-tool.js";
+import { createIssueUpdateTool } from "./linear-issue-update-tool.js";
+import { createIssueCreateTool } from "./linear-issue-create-tool.js";
 
 const CHANNEL_ID = "linear";
 const DEFAULT_DEBOUNCE_MS = 30_000;
@@ -145,6 +150,11 @@ export function activate(api: OpenClawPluginApi): void {
   const queue = new InboxQueue(queuePath);
 
   api.registerTool(createQueueTool(queue));
+  api.registerTool(createIssueViewTool());
+  api.registerTool(createCommentListTool());
+  api.registerTool(createCommentAddTool());
+  api.registerTool(createIssueUpdateTool());
+  api.registerTool(createIssueCreateTool());
 
   const route = createEventRouter({
     agentMapping,
