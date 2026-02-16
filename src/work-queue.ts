@@ -11,6 +11,7 @@ import {
   appendFileSync,
 } from "node:fs";
 import { dirname } from "node:path";
+import { safeParseJson } from "openclaw/plugin-sdk";
 
 export interface QueueItem {
   id: string;
@@ -74,12 +75,10 @@ function readJsonl(path: string): QueueItem[] {
     for (const line of content.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      try {
-        const item = JSON.parse(trimmed) as QueueItem;
+      const item = safeParseJson<QueueItem>(trimmed);
+      if (item) {
         if (!item.status) item.status = "pending"; // backward compat
         items.push(item);
-      } catch {
-        // skip malformed lines
       }
     }
     return items;

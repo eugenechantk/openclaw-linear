@@ -1,6 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
-import { jsonResult } from "openclaw/plugin-sdk";
+import { jsonResult, stringEnum, formatErrorMessage } from "openclaw/plugin-sdk";
 import {
   graphql,
   resolveIssueId,
@@ -12,16 +12,17 @@ import {
 } from "../linear-api.js";
 
 const Params = Type.Object({
-  action: Type.Unsafe<"view" | "list" | "create" | "update" | "delete">({
-    type: "string",
-    enum: ["view", "list", "create", "update", "delete"],
-    description:
-      "view: get full issue details. " +
-      "list: search/filter issues. " +
-      "create: create a new issue. " +
-      "update: modify an existing issue. " +
-      "delete: delete an issue.",
-  }),
+  action: stringEnum(
+    ["view", "list", "create", "update", "delete"] as const,
+    {
+      description:
+        "view: get full issue details. " +
+        "list: search/filter issues. " +
+        "create: create a new issue. " +
+        "update: modify an existing issue. " +
+        "delete: delete an issue.",
+    },
+  ),
   issueId: Type.Optional(
     Type.String({
       description:
@@ -106,7 +107,7 @@ export function createIssueTool(): AnyAgentTool {
         }
       } catch (err) {
         return jsonResult({
-          error: `linear_issue error: ${err instanceof Error ? err.message : String(err)}`,
+          error: `linear_issue error: ${formatErrorMessage(err)}`,
         });
       }
     },

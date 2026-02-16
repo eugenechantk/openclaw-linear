@@ -1,17 +1,18 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
-import { jsonResult } from "openclaw/plugin-sdk";
+import { jsonResult, stringEnum, formatErrorMessage } from "openclaw/plugin-sdk";
 import { graphql, resolveTeamId } from "../linear-api.js";
 
 const Params = Type.Object({
-  action: Type.Unsafe<"list" | "view" | "create">({
-    type: "string",
-    enum: ["list", "view", "create"],
-    description:
-      "list: search/filter projects. " +
-      "view: get full project details. " +
-      "create: create a new project.",
-  }),
+  action: stringEnum(
+    ["list", "view", "create"] as const,
+    {
+      description:
+        "list: search/filter projects. " +
+        "view: get full project details. " +
+        "create: create a new project.",
+    },
+  ),
   projectId: Type.Optional(
     Type.String({
       description: "Project ID. Required for view.",
@@ -64,7 +65,7 @@ export function createProjectTool(): AnyAgentTool {
         }
       } catch (err) {
         return jsonResult({
-          error: `linear_project error: ${err instanceof Error ? err.message : String(err)}`,
+          error: `linear_project error: ${formatErrorMessage(err)}`,
         });
       }
     },

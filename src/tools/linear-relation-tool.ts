@@ -1,6 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
-import { jsonResult } from "openclaw/plugin-sdk";
+import { jsonResult, stringEnum, optionalStringEnum, formatErrorMessage } from "openclaw/plugin-sdk";
 import { graphql, resolveIssueId } from "../linear-api.js";
 
 const RELATION_TYPE_MAP: Record<string, string> = {
@@ -11,27 +11,26 @@ const RELATION_TYPE_MAP: Record<string, string> = {
 };
 
 const Params = Type.Object({
-  action: Type.Unsafe<"list" | "add" | "delete">({
-    type: "string",
-    enum: ["list", "add", "delete"],
-    description:
-      "list: show all relations for an issue. " +
-      "add: create a relation between two issues. " +
-      "delete: remove a relation.",
-  }),
+  action: stringEnum(
+    ["list", "add", "delete"] as const,
+    {
+      description:
+        "list: show all relations for an issue. " +
+        "add: create a relation between two issues. " +
+        "delete: remove a relation.",
+    },
+  ),
   issueId: Type.Optional(
     Type.String({
       description:
         "Issue identifier (e.g. ENG-123). Required for list and add.",
     }),
   ),
-  type: Type.Optional(
-    Type.Unsafe<"blocks" | "blocked-by" | "related" | "duplicate">({
-      type: "string",
-      enum: ["blocks", "blocked-by", "related", "duplicate"],
-      description:
-        "Relation type. Required for add.",
-    }),
+  type: optionalStringEnum(
+    ["blocks", "blocked-by", "related", "duplicate"] as const,
+    {
+      description: "Relation type. Required for add.",
+    },
   ),
   relatedIssueId: Type.Optional(
     Type.String({
@@ -70,7 +69,7 @@ export function createRelationTool(): AnyAgentTool {
         }
       } catch (err) {
         return jsonResult({
-          error: `linear_relation error: ${err instanceof Error ? err.message : String(err)}`,
+          error: `linear_relation error: ${formatErrorMessage(err)}`,
         });
       }
     },

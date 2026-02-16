@@ -1,4 +1,5 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { formatErrorMessage } from "openclaw/plugin-sdk";
 import { createWebhookHandler } from "./webhook-handler.js";
 import { createEventRouter, type RouterAction } from "./event-router.js";
 import { InboxQueue, type EnqueueEntry } from "./work-queue.js";
@@ -116,7 +117,7 @@ async function dispatchConsolidatedActions(
       },
       onError: (err: unknown) => {
         api.logger.error(
-          `[linear] Reply error: ${err instanceof Error ? err.message : String(err)}`,
+          `[linear] Reply error: ${formatErrorMessage(err)}`,
         );
       },
     },
@@ -171,7 +172,7 @@ export function activate(api: OpenClawPluginApi): void {
     }
   }).catch((err) => {
     api.logger.error(
-      `[linear] Queue recovery failed: ${err instanceof Error ? err.message : String(err)}`,
+      `[linear] Queue recovery failed: ${formatErrorMessage(err)}`,
     );
   });
 
@@ -227,13 +228,13 @@ export function activate(api: OpenClawPluginApi): void {
         deliver: async () => {},
         onError: (err: unknown) => {
           api.logger.error(
-            `[linear] Queue wake error: ${err instanceof Error ? err.message : String(err)}`,
+            `[linear] Queue wake error: ${formatErrorMessage(err)}`,
           );
         },
       },
     }).catch((err) => {
       api.logger.error(
-        `[linear] Queue wake dispatch failed: ${err instanceof Error ? err.message : String(err)}`,
+        `[linear] Queue wake dispatch failed: ${formatErrorMessage(err)}`,
       );
     });
   });
@@ -258,7 +259,7 @@ export function activate(api: OpenClawPluginApi): void {
     },
     onError: (err) => {
       api.logger.error(
-        `[linear] Debounce flush failed: ${err instanceof Error ? err.message : String(err)}`,
+        `[linear] Debounce flush failed: ${formatErrorMessage(err)}`,
       );
     },
   });
@@ -291,7 +292,7 @@ export function activate(api: OpenClawPluginApi): void {
             ])
             .catch((err) =>
               api.logger.error(
-                `[linear] Notify enqueue error: ${err instanceof Error ? err.message : String(err)}`,
+                `[linear] Notify enqueue error: ${formatErrorMessage(err)}`,
               ),
             );
         }

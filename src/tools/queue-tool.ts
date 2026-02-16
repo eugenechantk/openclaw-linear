@@ -1,17 +1,18 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
-import { jsonResult } from "openclaw/plugin-sdk";
+import { jsonResult, stringEnum } from "openclaw/plugin-sdk";
 import type { InboxQueue } from "../work-queue.js";
 
-const QueueAction = Type.Unsafe<"peek" | "pop" | "drain" | "complete">({
-  type: "string",
-  enum: ["peek", "pop", "drain", "complete"],
-  description:
-    "peek: view all pending items without removing them. " +
-    "pop: claim the highest-priority pending item. " +
-    "drain: claim all pending items. " +
-    "complete: finish work on an in-progress item (requires issueId).",
-});
+const QueueAction = stringEnum(
+  ["peek", "pop", "drain", "complete"] as const,
+  {
+    description:
+      "peek: view all pending items without removing them. " +
+      "pop: claim the highest-priority pending item. " +
+      "drain: claim all pending items. " +
+      "complete: finish work on an in-progress item (requires issueId).",
+  },
+);
 
 const QueueToolParams = Type.Object({
   action: QueueAction,

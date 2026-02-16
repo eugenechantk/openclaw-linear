@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { formatErrorMessage } from "openclaw/plugin-sdk";
 
 export type LinearWebhookPayload = {
   action: string;
@@ -80,7 +81,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     try {
       rawBody = await readBody(req);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = formatErrorMessage(err);
       if (msg.includes("too large")) {
         res.writeHead(413);
         res.end("Payload Too Large");
@@ -126,7 +127,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
 
       deps.logger.info(`Linear webhook: ${event.action} ${event.type} (${String(event.data.id ?? "unknown")})`);
     } catch (err) {
-      deps.logger.error(`Webhook parse error: ${err instanceof Error ? err.message : String(err)}`);
+      deps.logger.error(`Webhook parse error: ${formatErrorMessage(err)}`);
       res.writeHead(500);
       res.end("Internal Server Error");
       return;
@@ -140,7 +141,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     try {
       deps.onEvent?.(event);
     } catch (err) {
-      deps.logger.error(`Event handler error: ${err instanceof Error ? err.message : String(err)}`);
+      deps.logger.error(`Event handler error: ${formatErrorMessage(err)}`);
     }
   };
 }

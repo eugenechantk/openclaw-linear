@@ -1,16 +1,17 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
-import { jsonResult } from "openclaw/plugin-sdk";
+import { jsonResult, stringEnum, formatErrorMessage } from "openclaw/plugin-sdk";
 import { graphql } from "../linear-api.js";
 
 const Params = Type.Object({
-  action: Type.Unsafe<"list" | "members">({
-    type: "string",
-    enum: ["list", "members"],
-    description:
-      "list: get all teams. " +
-      "members: get members of a specific team.",
-  }),
+  action: stringEnum(
+    ["list", "members"] as const,
+    {
+      description:
+        "list: get all teams. " +
+        "members: get members of a specific team.",
+    },
+  ),
   team: Type.Optional(
     Type.String({
       description: "Team key (e.g. ENG). Required for members.",
@@ -39,7 +40,7 @@ export function createTeamTool(): AnyAgentTool {
         }
       } catch (err) {
         return jsonResult({
-          error: `linear_team error: ${err instanceof Error ? err.message : String(err)}`,
+          error: `linear_team error: ${formatErrorMessage(err)}`,
         });
       }
     },

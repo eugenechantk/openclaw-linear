@@ -1,17 +1,18 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
-import { jsonResult } from "openclaw/plugin-sdk";
+import { jsonResult, stringEnum, formatErrorMessage } from "openclaw/plugin-sdk";
 import { graphql, resolveIssueId } from "../linear-api.js";
 
 const Params = Type.Object({
-  action: Type.Unsafe<"list" | "add" | "update">({
-    type: "string",
-    enum: ["list", "add", "update"],
-    description:
-      "list: get all comments on an issue. " +
-      "add: post a new comment. " +
-      "update: edit an existing comment.",
-  }),
+  action: stringEnum(
+    ["list", "add", "update"] as const,
+    {
+      description:
+        "list: get all comments on an issue. " +
+        "add: post a new comment. " +
+        "update: edit an existing comment.",
+    },
+  ),
   issueId: Type.Optional(
     Type.String({
       description:
@@ -59,7 +60,7 @@ export function createCommentTool(): AnyAgentTool {
         }
       } catch (err) {
         return jsonResult({
-          error: `linear_comment error: ${err instanceof Error ? err.message : String(err)}`,
+          error: `linear_comment error: ${formatErrorMessage(err)}`,
         });
       }
     },
