@@ -1,15 +1,131 @@
 # openclaw-linear
 
-Linear integration for [OpenClaw](https://github.com/nichochar/openclaw). Receives Linear webhook events, routes them to agents, and provides tools for managing issues, comments, projects, teams, and relations via the Linear GraphQL API.
+Linear integration for [OpenClaw](https://github.com/nichochar/openclaw). Receives Linear webhook events, routes them through a persistent work queue, and gives agents tools to manage issues, comments, projects, teams, and relations via the Linear GraphQL API.
 
-## Features
+## How It Works
 
-- **Webhook handler** — receives Linear webhook events with HMAC signature verification (timing-safe), duplicate delivery detection, and body size limits
-- **Event router** — filters by team and event type, routes issue assignments and comment mentions to the configured agent
-- **Debounced dispatch** — batches events within a configurable window before dispatching
-- **Work queue** — deterministic queue writes structured items with priority sorting, deduplication, and 24h auto-cleanup — no LLM tokens spent on triage
-- **Crash recovery** — resets stale `in_progress` queue items to `pending` on startup
-- **Direct API integration** — all tools call the Linear GraphQL API directly, no external CLI binary required
+```text
+                         Linear Webhook POST
+                                │
+                                ▼
+                  ┌───────────────────────────┐
+                  │      Webhook Handler      │
+                  │  HMAC verify · dedup (10m) │
+                  └─────────────┬─────────────┘
+                                │
+                                ▼
+                  ┌───────────────────────────┐
+                  │       Event Router        │
+                  │  team/type filter · user  │
+                  │  mapping · state actions  │
+                  └──────┬────────────┬───────┘
+                         │            │
+                     wake         notify
+                     actions      actions
+                         │            │
+                         ▼            │
+                  ┌──────────────┐    │
+                  │   Debouncer  │    │
+                  │  (30s batch) │    │
+                  └──────┬───────┘    │
+                         │            │
+                         ▼            ▼
+                  ┌───────────────────────────┐
+                  │        Work Queue         │
+                  │  JSONL · priority-sorted  │
+                  │  dedup · crash recovery   │
+                  └─────────────┬─────────────┘
+                                │
+                           added > 0?
+                          yes/      \no
+                           │         └─▶ (skip)
+                           ▼
+                  ┌───────────────────────────┐
+                  │     Agent Dispatch        │
+                  │  "N notification(s)       │
+                  │   queued"                 │
+                  └─────────────┬─────────────┘
+                                │
+                                ▼
+                  ┌───────────────────────────┐
+                  │          Agent            │
+                  │  peek · pop · complete    │
+                  └─────────────┬─────────────┘
+                                │
+                           on complete
+                                │
+                         items remain?
+                          yes/      \no
+                           │         └─▶ (idle)
+                           ▼
+                      auto-wake
+                    (new session)
+```
+
+Events flow through four stages. The **webhook handler** verifies signatures and deduplicates deliveries. The **event router** filters by team, type, and user, then classifies each event as `wake` (needs the agent's attention now) or `notify` (queue silently). Wake actions pass through a **debouncer** that batches events within a configurable window. Both paths write to the **work queue** — a persistent, priority-sorted JSONL file. The agent is only woken when new items are actually added (deduplication may suppress a dispatch). After the agent completes an item, **auto-wake** checks for remaining work and starts a fresh session if needed.
+
+## Work Queue
+
+The work queue is the central data structure. Every webhook event that needs agent attention passes through it. No LLM tokens are spent on triage — queue writes are fully deterministic.
+
+### Storage
+
+Items are persisted to a JSONL file (`queue/inbox.jsonl` in the plugin data directory). File writes use atomic temp-file + fsync + rename to prevent corruption. A mutex serializes all operations to prevent race conditions.
+
+### Item Lifecycle
+
+```text
+  webhook event
+       │
+       ▼
+   ┌────────┐   pop/drain   ┌─────────────┐   complete   ┌─────────┐
+   │pending │ ─────────────▶ │ in_progress │ ───────────▶ │ removed │
+   └────────┘                └─────────────┘              └─────────┘
+       │                            │
+       │  removal event             │  crash recovery
+       ▼                            ▼
+   (removed)                   (→ pending)
+```
+
+1. **Enqueue** — webhook events create `pending` items, deduped by `issueId:event`
+2. **Claim** — `pop` (single) or `drain` (all) moves items to `in_progress`
+3. **Complete** — removes the `in_progress` item from the file
+4. **Crash recovery** — on startup, all `in_progress` items reset to `pending`
+
+### Priority Sorting
+
+Items sort by Linear priority (1 = urgent, 4 = low). Priority 0 (none) maps to 5 so unprioritized items sort last. Ties break by timestamp (oldest first). Priority changes from Linear update items in-place.
+
+### Deduplication
+
+Each item has a dedup key of `issueId:event` (e.g. `ENG-42:ticket`). The same issue can appear twice with different event types (one ticket + one mention). If a duplicate already exists in the queue (any status), the new entry is skipped.
+
+### Removal Events
+
+When an issue is unassigned, reassigned away, or moved to a `remove` state, any matching `ticket` item is removed from the queue — even if already `in_progress`. This prevents the agent from working on stale assignments.
+
+### Queue Events
+
+| Agent Event | Queue Event | Behavior |
+|---|---|---|
+| `issue.assigned` | `ticket` | Enqueue + wake |
+| `issue.state_readded` | `ticket` | Enqueue + wake |
+| `comment.mention` | `mention` | Enqueue + wake |
+| `issue.unassigned` | — | Remove ticket |
+| `issue.reassigned` | — | Remove ticket |
+| `issue.state_removed` | — | Remove ticket |
+| `issue.priority_changed` | — | Update priority in-place |
+
+### Agent Tool
+
+The `linear_queue` tool gives agents four actions:
+
+| Action | Description |
+|--------|-------------|
+| `peek` | View all pending items sorted by priority |
+| `pop` | Claim the highest-priority pending item |
+| `drain` | Claim all pending items at once |
+| `complete` | Finish work on a claimed item (requires `issueId`) |
 
 ## Install
 
@@ -19,7 +135,7 @@ openclaw plugins install openclaw-linear
 
 ## Configuration
 
-Add the plugin to your OpenClaw config. Each OpenClaw instance runs one agent — configure a separate instance per agent.
+Each OpenClaw instance runs one agent — configure a separate instance per agent.
 
 ```yaml
 plugins:
@@ -44,32 +160,19 @@ plugins:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `apiKey` | string | **Yes** | Linear API key for authentication. Create one at [linear.app/settings/account/security](https://linear.app/settings/account/security). |
+| `apiKey` | string | **Yes** | Linear API key. Create at [linear.app/settings/account/security](https://linear.app/settings/account/security). |
 | `webhookSecret` | string | **Yes** | Shared secret for HMAC webhook signature verification. |
 | `agentMapping` | object | No | Maps Linear user UUIDs to agent IDs. Acts as a filter — events for unmapped users are ignored. Since each instance runs one agent, this typically has one entry. |
 | `teamIds` | string[] | No | Team keys to scope webhook processing. Empty = all teams. |
 | `eventFilter` | string[] | No | Event types to handle (`Issue`, `Comment`). Empty = all. |
-| `debounceMs` | integer | No | Debounce window in milliseconds. Events arriving within this window are batched into a single dispatch. Default: `30000` (30s). |
+| `debounceMs` | integer | No | Debounce window in milliseconds. Events within this window are batched into a single dispatch. Default: `30000` (30s). |
 | `stateActions` | object | No | Maps Linear state types or names to queue actions (`"add"`, `"remove"`, `"ignore"`). See [State Actions](#state-actions). |
 
 ## Tools
 
-The plugin provides six tools that agents can use to interact with Linear. All tools use an `action` parameter to select the operation.
-
-### `linear_queue` — notification inbox
-
-Manage the queue of webhook-driven notifications.
-
-| Action | Description |
-|--------|-------------|
-| `peek` | View all pending items sorted by priority |
-| `pop` | Claim the highest-priority pending item |
-| `drain` | Claim all pending items |
-| `complete` | Finish work on a claimed item (requires `issueId`) |
+The plugin provides six tools. All use an `action` parameter to select the operation.
 
 ### `linear_issue` — issue management
-
-View, search, create, update, and delete Linear issues.
 
 | Action | Required | Optional |
 |--------|----------|----------|
@@ -82,8 +185,6 @@ View, search, create, update, and delete Linear issues.
 Issues are referenced by human-readable identifiers (e.g. `ENG-123`). Names are resolved automatically — `assignee` accepts display names or emails, `state` accepts workflow state names, `team` accepts team keys, and `labels` accepts label names.
 
 ### `linear_comment` — comments
-
-Read, create, and update comments on issues.
 
 | Action | Required | Optional |
 |--------|----------|----------|
@@ -144,11 +245,11 @@ Relation types: `blocks`, `blocked-by`, `related`, `duplicate`.
 | Issue state change → `remove` action | `notify` | `issue.state_removed` |
 | @mention in comment (mapped user) | `wake` | `comment.mention` |
 
-`wake` events are enqueued into the debouncer and dispatched to the agent. `notify` events write to the queue without waking.
+`wake` events pass through the debouncer and dispatch to the agent. `notify` events write directly to the queue without waking.
 
 ## State Actions
 
-When an issue's state changes, the plugin resolves what to do based on the `stateActions` config. This lets you control which state transitions re-add issues to the queue (e.g. bounced back from testing) vs. remove them (e.g. done/canceled) vs. are ignored (e.g. in progress).
+When an issue's state changes, the plugin resolves what to do based on the `stateActions` config. This controls which state transitions re-add issues to the queue (e.g. bounced back from testing) vs. remove them (e.g. done/canceled) vs. are ignored (e.g. in progress).
 
 **Resolution order:** state name match → state type match → built-in default.
 
@@ -170,21 +271,6 @@ Linear has 6 fixed state types. Custom state names (e.g. "In Review", "QA") are 
 - `"add"` — re-add the issue to the queue as a ticket and wake the agent
 - `"remove"` — remove the issue's ticket from the queue
 - `"ignore"` — do nothing (default for unmapped states)
-
-## How Dispatch Works
-
-```text
-Linear webhook POST
-  → HMAC signature verified (timing-safe)
-  → Duplicate delivery check (10-min TTL, 10k cap)
-  → Event router filters by team/type, matches user via agentMapping
-  → wake actions enqueued into debouncer (keyed by agent ID)
-  → After debounce window expires:
-      → Notifications written to queue (deterministic, no LLM)
-      → Deduped against existing non-done items — skips dispatch if nothing new
-      → Agent receives: "3 new Linear notification(s) queued."
-      → After agent completes an item, auto-wake continues if items remain
-```
 
 ## Architecture
 
