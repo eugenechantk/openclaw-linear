@@ -1,5 +1,5 @@
 {
-  "id": "linear",
+  "id": "openclaw-linear",
   "name": "Linear",
   "description": "Linear project management integration for OpenClaw",
   "skills": ["./skills"],

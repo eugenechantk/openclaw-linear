@@ -321,7 +321,7 @@ export async function deactivate(api: OpenClawPluginApi): Promise<void> {
 }
 
 const plugin = {
-  id: "linear",
+  id: "openclaw-linear",
   name: "Linear",
   description: "Linear project management integration for OpenClaw",
   activate,
