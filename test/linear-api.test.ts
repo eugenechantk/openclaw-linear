@@ -87,16 +87,31 @@ describe("graphql", () => {
     expect(body.variables).toEqual({ id: "i1" });
   });
 
-  it("throws on HTTP error", async () => {
+  it("throws on HTTP error with response body", async () => {
     setApiKey("lin_api_test");
     mockFetch.mockResolvedValueOnce({
       ok: false,
       status: 401,
       statusText: "Unauthorized",
+      text: async () => '{"error":"Invalid API key"}',
     });
 
     await expect(graphql("{ viewer { id } }")).rejects.toThrow(
-      "HTTP 401: Unauthorized",
+      'HTTP 401: Unauthorized: {"error":"Invalid API key"}',
+    );
+  });
+
+  it("throws on HTTP error without response body", async () => {
+    setApiKey("lin_api_test");
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      text: async () => "",
+    });
+
+    await expect(graphql("{ viewer { id } }")).rejects.toThrow(
+      "HTTP 500: Internal Server Error",
     );
   });
 
@@ -173,16 +188,42 @@ describe("resolveStateId", () => {
 
   it("resolves state by name and team", async () => {
     mockGraphqlResponse({
-      workflowStates: { nodes: [{ id: "state-1" }] },
+      team: {
+        states: {
+          nodes: [
+            { id: "state-1", name: "In Progress" },
+            { id: "state-2", name: "Done" },
+          ],
+        },
+      },
     });
     const id = await resolveStateId("team-1", "In Progress");
     expect(id).toBe("state-1");
   });
 
-  it("throws when state not found", async () => {
-    mockGraphqlResponse({ workflowStates: { nodes: [] } });
+  it("is case-insensitive", async () => {
+    mockGraphqlResponse({
+      team: {
+        states: { nodes: [{ id: "state-1", name: "In Progress" }] },
+      },
+    });
+    const id = await resolveStateId("team-1", "in progress");
+    expect(id).toBe("state-1");
+  });
+
+  it("throws when state not found with available states", async () => {
+    mockGraphqlResponse({
+      team: {
+        states: {
+          nodes: [
+            { id: "state-1", name: "Todo" },
+            { id: "state-2", name: "Done" },
+          ],
+        },
+      },
+    });
     await expect(resolveStateId("team-1", "Nonexistent")).rejects.toThrow(
-      'Workflow state "Nonexistent" not found',
+      'Workflow state "Nonexistent" not found. Available states: Todo, Done',
     );
   });
 });
@@ -211,11 +252,13 @@ describe("resolveLabelIds", () => {
 
   it("resolves label names to IDs", async () => {
     mockGraphqlResponse({
-      issueLabels: {
-        nodes: [
-          { id: "l1", name: "Bug" },
-          { id: "l2", name: "Feature" },
-        ],
+      team: {
+        labels: {
+          nodes: [
+            { id: "l1", name: "Bug" },
+            { id: "l2", name: "Feature" },
+          ],
+        },
       },
     });
     const ids = await resolveLabelIds("team-1", ["Bug", "Feature"]);
@@ -224,8 +267,8 @@ describe("resolveLabelIds", () => {
 
   it("is case-insensitive", async () => {
     mockGraphqlResponse({
-      issueLabels: {
-        nodes: [{ id: "l1", name: "Bug" }],
+      team: {
+        labels: { nodes: [{ id: "l1", name: "Bug" }] },
       },
     });
     const ids = await resolveLabelIds("team-1", ["bug"]);
@@ -234,7 +277,7 @@ describe("resolveLabelIds", () => {
 
   it("throws when label not found", async () => {
     mockGraphqlResponse({
-      issueLabels: { nodes: [{ id: "l1", name: "Bug" }] },
+      team: { labels: { nodes: [{ id: "l1", name: "Bug" }] } },
     });
     await expect(resolveLabelIds("team-1", ["Missing"])).rejects.toThrow(
       'Label "Missing" not found in team',

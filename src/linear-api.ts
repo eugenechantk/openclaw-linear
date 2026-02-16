@@ -29,7 +29,14 @@ export async function graphql<T>(
   });
 
   if (!res.ok) {
-    throw new Error(`Linear API HTTP ${res.status}: ${res.statusText}`);
+    let detail = res.statusText;
+    try {
+      const body = await res.text();
+      if (body) detail += `: ${body}`;
+    } catch {
+      // ignore read errors
+    }
+    throw new Error(`Linear API HTTP ${res.status}: ${detail}`);
   }
 
   const json = (await res.json()) as {
@@ -108,20 +115,28 @@ export async function resolveStateId(
   stateName: string,
 ): Promise<string> {
   const data = await graphql<{
-    workflowStates: { nodes: { id: string }[] };
+    team: { states: { nodes: { id: string; name: string }[] } };
   }>(
-    `query($teamId: String!, $name: String!) {
-      workflowStates(filter: { team: { id: { eq: $teamId } }, name: { eqIgnoreCase: $name } }) {
-        nodes { id }
+    `query($teamId: String!) {
+      team(id: $teamId) {
+        states { nodes { id name } }
       }
     }`,
-    { teamId, name: stateName },
+    { teamId },
   );
 
-  if (data.workflowStates.nodes.length === 0) {
-    throw new Error(`Workflow state "${stateName}" not found`);
+  const lowerName = stateName.toLowerCase();
+  const match = data.team.states.nodes.find(
+    (s) => s.name.toLowerCase() === lowerName,
+  );
+
+  if (!match) {
+    const available = data.team.states.nodes.map((s) => s.name).join(", ");
+    throw new Error(
+      `Workflow state "${stateName}" not found. Available states: ${available}`,
+    );
   }
-  return data.workflowStates.nodes[0].id;
+  return match.id;
 }
 
 export async function resolveUserId(nameOrEmail: string): Promise<string> {
@@ -147,18 +162,18 @@ export async function resolveLabelIds(
   names: string[],
 ): Promise<string[]> {
   const data = await graphql<{
-    issueLabels: { nodes: { id: string; name: string }[] };
+    team: { labels: { nodes: { id: string; name: string }[] } };
   }>(
     `query($teamId: String!) {
-      issueLabels(filter: { team: { id: { eq: $teamId } } }) {
-        nodes { id name }
+      team(id: $teamId) {
+        labels { nodes { id name } }
       }
     }`,
     { teamId },
   );
 
   const labelMap = new Map(
-    data.issueLabels.nodes.map((l) => [l.name.toLowerCase(), l.id]),
+    data.team.labels.nodes.map((l) => [l.name.toLowerCase(), l.id]),
   );
 
   const ids: string[] = [];
