@@ -34,6 +34,12 @@ const Params = Type.Object({
   description: Type.Optional(
     Type.String({ description: "Issue description (markdown)." }),
   ),
+  appendDescription: Type.Optional(
+    Type.Boolean({
+      description:
+        "When true, append the description text to the existing description instead of replacing it. Only used with update.",
+    }),
+  ),
   assignee: Type.Optional(
     Type.String({ description: "Assignee display name or email." }),
   ),
@@ -275,20 +281,25 @@ async function updateIssue(params: Params) {
   const id = await resolveIssueId(params.issueId);
   const input: Record<string, unknown> = {};
 
-  // We need the team ID for state/label resolution — fetch it from the issue
+  // We need the team ID for state/label resolution, or the current description for append
   let teamId: string | undefined;
-  if (params.state || params.labels?.length) {
+  if (params.state || params.labels?.length || params.appendDescription) {
     const issueData = await graphql<{
-      issue: { team: { id: string } };
+      issue: { team: { id: string }; description?: string };
     }>(
-      `query($id: String!) { issue(id: $id) { team { id } } }`,
+      `query($id: String!) { issue(id: $id) { team { id } description } }`,
       { id },
     );
     teamId = issueData.issue.team.id;
+
+    if (params.appendDescription && params.description !== undefined) {
+      const existing = issueData.issue.description ?? "";
+      input.description = existing ? `${existing}\n\n${params.description}` : params.description;
+    }
   }
 
   if (params.title) input.title = params.title;
-  if (params.description !== undefined) input.description = params.description;
+  if (params.description !== undefined && !params.appendDescription) input.description = params.description;
   if (params.priority !== undefined) input.priority = params.priority;
   if (params.state) input.stateId = await resolveStateId(teamId!, params.state);
   if (params.assignee) input.assigneeId = await resolveUserId(params.assignee);
