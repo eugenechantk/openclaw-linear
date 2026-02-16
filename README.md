@@ -2,6 +2,64 @@
 
 Linear integration for [OpenClaw](https://github.com/nichochar/openclaw). Receives Linear webhook events, routes them through a persistent work queue, and gives agents tools to manage issues, comments, projects, teams, and relations via the Linear GraphQL API.
 
+## Install
+
+```bash
+openclaw plugins install openclaw-linear
+```
+
+## Configuration
+
+Each OpenClaw instance runs one agent — configure a separate instance per agent.
+
+```yaml
+plugins:
+  linear:
+    apiKey: "lin_api_..."                # Linear API key (required)
+    webhookSecret: "your-signing-secret" # Webhook secret (required)
+    agentMapping:                        # Filter: only handle events for these Linear users
+      "linear-user-uuid": "titus"
+    teamIds: ["ENG", "OPS"]             # Optional: filter to specific teams (empty = all)
+    eventFilter: ["Issue", "Comment"]    # Optional: filter event types (empty = all)
+    debounceMs: 30000                    # Optional: batch window in ms (default: 30000)
+    stateActions:                        # Optional: map state types/names to queue actions
+      backlog: "add"
+      unstarted: "add"
+      started: "ignore"
+      "In Review": "remove"             # State names override type matches (case-insensitive)
+      completed: "remove"
+      canceled: "remove"
+```
+
+### Config Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `apiKey` | string | **Yes** | Linear API key. Create at [linear.app/settings/account/security](https://linear.app/settings/account/security). |
+| `webhookSecret` | string | **Yes** | Shared secret for HMAC webhook signature verification. |
+| `agentMapping` | object | No | Maps Linear user UUIDs to agent IDs. Acts as a filter — events for unmapped users are ignored. Since each instance runs one agent, this typically has one entry. |
+| `teamIds` | string[] | No | Team keys to scope webhook processing. Empty = all teams. |
+| `eventFilter` | string[] | No | Event types to handle (`Issue`, `Comment`). Empty = all. |
+| `debounceMs` | integer | No | Debounce window in milliseconds. Events within this window are batched into a single dispatch. Default: `30000` (30s). |
+| `stateActions` | object | No | Maps Linear state types or names to queue actions (`"add"`, `"remove"`, `"ignore"`). See [State Actions](#state-actions). |
+
+## Webhook Setup
+
+1. **Make your endpoint publicly accessible.** The plugin registers at `/hooks/linear`:
+   ```bash
+   # Example with Tailscale Funnel
+   tailscale funnel --bg 3000
+   ```
+
+2. **Register the webhook in Linear:**
+   - Go to **Settings > API > Webhooks**
+   - Set the URL to `https://your-host/hooks/linear`
+   - Set the secret to match your `webhookSecret`
+   - Select event types: Issues, Comments
+   - Save
+
+3. **Verify:** Assign a Linear issue to a mapped user — the agent should receive a notification.
+
 ## How It Works
 
 ```text
@@ -127,47 +185,6 @@ The `linear_queue` tool gives agents four actions:
 | `drain` | Claim all pending items at once |
 | `complete` | Finish work on a claimed item (requires `issueId`) |
 
-## Install
-
-```bash
-openclaw plugins install openclaw-linear
-```
-
-## Configuration
-
-Each OpenClaw instance runs one agent — configure a separate instance per agent.
-
-```yaml
-plugins:
-  linear:
-    apiKey: "lin_api_..."                # Linear API key (required)
-    webhookSecret: "your-signing-secret" # Webhook secret (required)
-    agentMapping:                        # Filter: only handle events for these Linear users
-      "linear-user-uuid": "titus"
-    teamIds: ["ENG", "OPS"]             # Optional: filter to specific teams (empty = all)
-    eventFilter: ["Issue", "Comment"]    # Optional: filter event types (empty = all)
-    debounceMs: 30000                    # Optional: batch window in ms (default: 30000)
-    stateActions:                        # Optional: map state types/names to queue actions
-      backlog: "add"
-      unstarted: "add"
-      started: "ignore"
-      "In Review": "remove"             # State names override type matches (case-insensitive)
-      completed: "remove"
-      canceled: "remove"
-```
-
-### Config Fields
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `apiKey` | string | **Yes** | Linear API key. Create at [linear.app/settings/account/security](https://linear.app/settings/account/security). |
-| `webhookSecret` | string | **Yes** | Shared secret for HMAC webhook signature verification. |
-| `agentMapping` | object | No | Maps Linear user UUIDs to agent IDs. Acts as a filter — events for unmapped users are ignored. Since each instance runs one agent, this typically has one entry. |
-| `teamIds` | string[] | No | Team keys to scope webhook processing. Empty = all teams. |
-| `eventFilter` | string[] | No | Event types to handle (`Issue`, `Comment`). Empty = all. |
-| `debounceMs` | integer | No | Debounce window in milliseconds. Events within this window are batched into a single dispatch. Default: `30000` (30s). |
-| `stateActions` | object | No | Maps Linear state types or names to queue actions (`"add"`, `"remove"`, `"ignore"`). See [State Actions](#state-actions). |
-
 ## Tools
 
 The plugin provides six tools. All use an `action` parameter to select the operation.
@@ -216,23 +233,6 @@ Issues are referenced by human-readable identifiers (e.g. `ENG-123`). Names are 
 | `delete` | `relationId` |
 
 Relation types: `blocks`, `blocked-by`, `related`, `duplicate`.
-
-## Webhook Setup
-
-1. **Make your endpoint publicly accessible.** The plugin registers at `/hooks/linear`:
-   ```bash
-   # Example with Tailscale Funnel
-   tailscale funnel --bg 3000
-   ```
-
-2. **Register the webhook in Linear:**
-   - Go to **Settings > API > Webhooks**
-   - Set the URL to `https://your-host/hooks/linear`
-   - Set the secret to match your `webhookSecret`
-   - Select event types: Issues, Comments
-   - Save
-
-3. **Verify:** Assign a Linear issue to a mapped user — the agent should receive a notification.
 
 ## Routed Events
 
