@@ -34,7 +34,7 @@ describe("linear_project tool", () => {
             {
               id: "p1",
               name: "Alpha",
-              state: "started",
+              status: { name: "Started", type: "started" },
               teams: { nodes: [{ name: "Eng", key: "ENG" }] },
             },
           ],
@@ -61,6 +61,7 @@ describe("linear_project tool", () => {
       });
 
       const query = mockedGraphql.mock.calls[0][0] as string;
+      expect(query).toContain("status:");
       expect(query).toContain("$status");
       expect(query).toContain("$team");
     });
@@ -73,7 +74,7 @@ describe("linear_project tool", () => {
           id: "p1",
           name: "Alpha",
           description: "Main project",
-          state: "started",
+          status: { name: "Started", type: "started" },
         },
       });
 

@@ -77,7 +77,7 @@ async function listProjects(params: Params) {
   const varDecls: string[] = [];
 
   if (params.status) {
-    filterParts.push("state: { eqIgnoreCase: $status }");
+    filterParts.push("status: { type: { eqIgnoreCase: $status } }");
     variables.status = params.status;
     varDecls.push("$status: String!");
   }
@@ -101,7 +101,7 @@ async function listProjects(params: Params) {
       nodes: {
         id: string;
         name: string;
-        state: string;
+        status: { name: string; type: string };
         teams: { nodes: { name: string; key: string }[] };
       }[];
     };
@@ -111,7 +111,7 @@ async function listProjects(params: Params) {
         nodes {
           id
           name
-          state
+          status { name type }
           teams { nodes { name key } }
         }
       }
@@ -135,7 +135,7 @@ async function viewProject(params: Params) {
         id
         name
         description
-        state
+        status { name type }
         url
         createdAt
         updatedAt
