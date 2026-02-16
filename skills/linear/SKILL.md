@@ -53,7 +53,7 @@ Manage Linear issues: view details, search/filter, create, update, and delete.
 | `view` | `issueId` | — |
 | `list` | — | `state`, `assignee`, `team`, `project`, `limit` |
 | `create` | `title` | `description`, `assignee`, `state`, `priority`, `team`, `project`, `parent`, `labels` |
-| `update` | `issueId` | `title`, `description`, `assignee`, `state`, `priority`, `labels`, `project` |
+| `update` | `issueId` | `title`, `description`, `appendDescription`, `assignee`, `state`, `priority`, `labels`, `project` |
 | `delete` | `issueId` | — |
 
 - `issueId` accepts human-readable identifiers like `ENG-123`
@@ -63,6 +63,7 @@ Manage Linear issues: view details, search/filter, create, update, and delete.
 - `priority` is numeric: 0=None, 1=Urgent, 2=High, 3=Medium, 4=Low
 - `labels` is an array of label names
 - `parent` accepts a parent issue identifier for creating sub-issues
+- `appendDescription` (boolean) — when true, appends `description` to the existing description instead of replacing it (update only)
 
 ### `linear_comment` — manage comments
 
