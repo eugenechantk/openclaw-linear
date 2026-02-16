@@ -64,6 +64,7 @@ Manage Linear issues: view details, search/filter, create, update, and delete.
 - `labels` is an array of label names
 - `parent` accepts a parent issue identifier for creating sub-issues
 - `appendDescription` (boolean) — when true, appends `description` to the existing description instead of replacing it (update only)
+- `description` supports markdown. **Use actual newlines for line breaks, not `\n` escape sequences** — literal `\n` will appear as-is in the ticket instead of creating line breaks
 
 ### `linear_comment` — manage comments
 
@@ -75,7 +76,7 @@ Read, create, and update comments on Linear issues.
 | `add` | `issueId`, `body` | `parentCommentId` |
 | `update` | `commentId`, `body` | — |
 
-- `body` supports markdown
+- `body` supports markdown. **Use actual newlines for line breaks, not `\n` escape sequences** — literal `\n` will appear as-is in the comment instead of creating line breaks
 - `parentCommentId` threads the comment as a reply
 
 ### `linear_team` — teams and members
