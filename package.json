@@ -1,6 +1,6 @@
 {
   "name": "openclaw-linear",
-  "version": "0.5.6",
+  "version": "0.6.0",
   "description": "Linear integration for OpenClaw — webhook routing, issue management, and project tools via the Linear GraphQL API",
   "type": "module",
   "main": "dist/index.js",
