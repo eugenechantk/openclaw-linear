@@ -10,6 +10,8 @@ export type RouterAction = {
   identifier: string;
   issuePriority: number;
   linearUserId: string;
+  /** Comment ID for mention events — used as dedup key in the queue. */
+  commentId?: string;
 };
 
 export type StateAction = "add" | "remove" | "ignore";
@@ -338,10 +340,21 @@ function handleComment(
   config: EventRouterConfig,
 ): RouterAction[] {
   const body = event.data.body as string | undefined;
-  if (!body) return [];
+  if (!body) {
+    config.logger.info(
+      `Comment ${String(event.data.id ?? "unknown")} has empty body — skipping`,
+    );
+    return [];
+  }
 
+  const commentId = String(event.data.id ?? "");
   const bodyData = event.data.bodyData;
   const mentionedIds = extractMentionedUserIds(body, bodyData);
+
+  if (mentionedIds.length === 0) {
+    return [];
+  }
+
   const actions: RouterAction[] = [];
 
   const issueRef = event.data.issue as Record<string, unknown> | undefined;
@@ -365,6 +378,7 @@ function handleComment(
         identifier,
         issuePriority,
         linearUserId: userId,
+        commentId,
       });
     } else {
       config.logger.info(

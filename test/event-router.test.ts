@@ -585,6 +585,7 @@ describe("event-router", () => {
         type: "Comment",
         action: "create",
         data: {
+          id: "comment-abc",
           body: "Hey @user-1 can you look at this?",
           issue: { id: "issue-789" },
         },
@@ -601,6 +602,7 @@ describe("event-router", () => {
         identifier: "issue-789",
         issuePriority: 0,
         linearUserId: "user-1",
+        commentId: "comment-abc",
       });
       expect(actions[0].detail).toContain("Mentioned in comment on issue");
       expect(actions[0].detail).toContain("Hey @user-1 can you look at this?");

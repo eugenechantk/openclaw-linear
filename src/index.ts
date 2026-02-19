@@ -75,7 +75,8 @@ async function dispatchConsolidatedActions(
 
   // Write to queue deterministically — no LLM involved
   const entries: EnqueueEntry[] = actions.map((a) => ({
-    id: a.identifier,
+    id: a.commentId || a.identifier,
+    issueId: a.identifier,
     event: a.event,
     summary: a.issueLabel,
     issuePriority: a.issuePriority,
@@ -284,7 +285,8 @@ export function activate(api: OpenClawPluginApi): void {
           queue
             .enqueue([
               {
-                id: action.identifier,
+                id: action.commentId || action.identifier,
+                issueId: action.identifier,
                 event: action.event,
                 summary: action.issueLabel,
                 issuePriority: action.issuePriority,

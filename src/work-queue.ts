@@ -38,6 +38,8 @@ const REMOVAL_EVENTS = new Set([
 
 export interface EnqueueEntry {
   id: string;
+  /** Issue identifier for queue display and completion. Defaults to `id`. */
+  issueId?: string;
   event: string;
   summary: string;
   issuePriority: number;
@@ -171,9 +173,9 @@ export class InboxQueue {
         writeJsonl(this.path, filtered);
       }
 
-      // Build dedup set from remaining items using mapped queue events
+      // Build dedup set from remaining items using id + mapped queue event
       const existingKeys = new Set(
-        filtered.map((item) => `${item.issueId}:${item.event}`),
+        filtered.map((item) => `${item.id}:${item.event}`),
       );
 
       const newItems: QueueItem[] = [];
@@ -188,7 +190,7 @@ export class InboxQueue {
 
         newItems.push({
           id: entry.id,
-          issueId: entry.id,
+          issueId: entry.issueId ?? entry.id,
           event: queueEvent,
           summary: entry.summary,
           priority: mapPriority(entry.issuePriority),

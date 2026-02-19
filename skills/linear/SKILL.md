@@ -42,6 +42,8 @@ Event types:
 | `ticket` | You have a ticket to work on. |
 | `mention` | You were mentioned in a comment. |
 
+For `ticket` events, `id` and `issueId` are the same (the issue identifier). For `mention` events, `id` is the comment ID and `issueId` is the parent issue identifier. Always use `issueId` when calling `linear_issue`, `linear_comment`, or `linear_queue complete`.
+
 Priority maps from the Linear issue (1=Urgent, 2=High, 3=Medium, 4=Low, 5=None). Higher-priority items are popped first.
 
 ### `linear_issue` — manage issues

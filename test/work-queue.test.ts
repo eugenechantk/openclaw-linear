@@ -115,6 +115,34 @@ describe("InboxQueue.enqueue", () => {
     expect(items.map((i) => i.event)).toEqual(["mention", "ticket"]);
     expect(items.map((i) => i.priority)).toEqual([3, 1]);
   });
+
+  it("does not dedup different comments on the same issue", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([
+      { id: "comment-1", issueId: "ENG-42", event: "comment.mention", summary: "first mention", issuePriority: 2 },
+    ]);
+    const added = await queue.enqueue([
+      { id: "comment-2", issueId: "ENG-42", event: "comment.mention", summary: "second mention", issuePriority: 2 },
+    ]);
+    expect(added).toBe(1);
+    const items = readItems();
+    expect(items).toHaveLength(2);
+    expect(items[0].issueId).toBe("ENG-42");
+    expect(items[1].issueId).toBe("ENG-42");
+    expect(items[0].id).toBe("comment-1");
+    expect(items[1].id).toBe("comment-2");
+  });
+
+  it("uses issueId from entry when provided", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([
+      { id: "comment-abc", issueId: "ENG-10", event: "comment.mention", summary: "hey", issuePriority: 3 },
+    ]);
+    const items = readItems();
+    expect(items).toHaveLength(1);
+    expect(items[0].id).toBe("comment-abc");
+    expect(items[0].issueId).toBe("ENG-10");
+  });
 });
 
 // --- InboxQueue.pop (claim semantics) ---
