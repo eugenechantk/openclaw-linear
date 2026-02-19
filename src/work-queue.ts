@@ -193,7 +193,7 @@ export class InboxQueue {
           issueId: entry.issueId ?? entry.id,
           event: queueEvent,
           summary: entry.summary,
-          priority: mapPriority(entry.issuePriority),
+          priority: queueEvent === "mention" ? 0 : mapPriority(entry.issuePriority),
           addedAt: now,
           status: "pending",
         });

@@ -107,13 +107,25 @@ describe("InboxQueue.enqueue", () => {
   it("uses issue priority for queue ordering", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
     await queue.enqueue([
-      entry("ENG-10", "comment.mention", "hey", 3),
+      entry("ENG-10", "issue.assigned", "low fix", 4),
       entry("ENG-11", "issue.assigned", "urgent fix", 1),
     ]);
-    const items = readItems();
-    expect(items).toHaveLength(2);
-    expect(items.map((i) => i.event)).toEqual(["mention", "ticket"]);
-    expect(items.map((i) => i.priority)).toEqual([3, 1]);
+    const items = await queue.peek();
+    expect(items.map((i) => i.id)).toEqual(["ENG-11", "ENG-10"]);
+    expect(items.map((i) => i.priority)).toEqual([1, 4]);
+  });
+
+  it("always prioritizes mentions over tickets", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([
+      entry("ENG-11", "issue.assigned", "urgent fix", 1),
+      entry("ENG-10", "comment.mention", "hey", 4),
+    ]);
+    const items = await queue.peek();
+    expect(items[0].event).toBe("mention");
+    expect(items[0].priority).toBe(0);
+    expect(items[1].event).toBe("ticket");
+    expect(items[1].priority).toBe(1);
   });
 
   it("does not dedup different comments on the same issue", async () => {
@@ -160,15 +172,16 @@ describe("InboxQueue.pop", () => {
       entry("ENG-11", "issue.assigned", "urgent fix", 1),
     ]);
 
+    // Mentions always get priority 0, so ENG-10 is popped first
     const item = await queue.pop();
-    expect(item!.id).toBe("ENG-11");
+    expect(item!.id).toBe("ENG-10");
     expect(item!.status).toBe("in_progress");
 
-    // Both items still in file, but ENG-11 is in_progress
+    // Both items still in file, but ENG-10 is in_progress
     const onDisk = readItems();
     expect(onDisk).toHaveLength(2);
-    expect(onDisk.find((i) => i.id === "ENG-11")!.status).toBe("in_progress");
-    expect(onDisk.find((i) => i.id === "ENG-10")!.status).toBe("pending");
+    expect(onDisk.find((i) => i.id === "ENG-10")!.status).toBe("in_progress");
+    expect(onDisk.find((i) => i.id === "ENG-11")!.status).toBe("pending");
   });
 
   it("skips in_progress items and returns next pending", async () => {
@@ -179,10 +192,10 @@ describe("InboxQueue.pop", () => {
     ]);
 
     const first = await queue.pop();
-    expect(first!.id).toBe("ENG-11");
+    expect(first!.id).toBe("ENG-10");
 
     const second = await queue.pop();
-    expect(second!.id).toBe("ENG-10");
+    expect(second!.id).toBe("ENG-11");
 
     // No more pending items
     expect(await queue.pop()).toBeNull();
@@ -196,9 +209,10 @@ describe("InboxQueue.pop", () => {
       entry("ENG-12", "issue.assigned", "medium task", 3),
     ]);
 
+    // Mention (priority 0) first, then tickets by issue priority
+    expect((await queue.pop())!.id).toBe("ENG-10");
     expect((await queue.pop())!.id).toBe("ENG-11");
     expect((await queue.pop())!.id).toBe("ENG-12");
-    expect((await queue.pop())!.id).toBe("ENG-10");
     expect(await queue.pop()).toBeNull();
   });
 });
@@ -218,9 +232,10 @@ describe("InboxQueue.peek", () => {
       entry("ENG-11", "issue.assigned", "urgent fix", 1),
     ]);
 
+    // Mention gets priority 0, always before tickets
     const items = await queue.peek();
-    expect(items.map((i) => i.id)).toEqual(["ENG-11", "ENG-10"]);
-    expect(items.map((i) => i.priority)).toEqual([1, 4]);
+    expect(items.map((i) => i.id)).toEqual(["ENG-10", "ENG-11"]);
+    expect(items.map((i) => i.priority)).toEqual([0, 1]);
   });
 
   it("does not remove items", async () => {
@@ -238,12 +253,12 @@ describe("InboxQueue.peek", () => {
       entry("ENG-11", "issue.assigned", "urgent fix", 1),
     ]);
 
-    // Claim one
+    // Claim one (mention pops first)
     await queue.pop();
 
     const items = await queue.peek();
     expect(items).toHaveLength(1);
-    expect(items[0].id).toBe("ENG-10");
+    expect(items[0].id).toBe("ENG-11");
     expect(items[0].status).toBe("pending");
   });
 });
@@ -264,7 +279,7 @@ describe("InboxQueue.drain", () => {
     ]);
 
     const items = await queue.drain();
-    expect(items.map((i) => i.id)).toEqual(["ENG-11", "ENG-10"]);
+    expect(items.map((i) => i.id)).toEqual(["ENG-10", "ENG-11"]);
     expect(items.every((i) => i.status === "in_progress")).toBe(true);
 
     // Items still on disk but all in_progress
@@ -283,13 +298,13 @@ describe("InboxQueue.drain", () => {
       entry("ENG-11", "issue.assigned", "urgent fix", 1),
     ]);
 
-    // Claim one via pop
+    // Claim one via pop (mention pops first)
     await queue.pop();
 
     // Drain should only get remaining pending item
     const items = await queue.drain();
     expect(items).toHaveLength(1);
-    expect(items[0].id).toBe("ENG-10");
+    expect(items[0].id).toBe("ENG-11");
   });
 });
 
@@ -336,7 +351,7 @@ describe("InboxQueue.recover", () => {
       entry("ENG-10", "comment.mention", "hey", 4),
       entry("ENG-11", "issue.assigned", "urgent fix", 1),
     ]);
-    await queue.pop(); // claim ENG-11
+    await queue.pop(); // claim ENG-10 (mention)
 
     const count = await queue.recover();
     expect(count).toBe(1);
