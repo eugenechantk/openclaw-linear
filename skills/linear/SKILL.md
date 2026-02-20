@@ -54,8 +54,8 @@ Manage Linear issues: view details, search/filter, create, update, and delete.
 |---|---|---|
 | `view` | `issueId` | — |
 | `list` | — | `state`, `assignee`, `team`, `project`, `limit` |
-| `create` | `title` | `description`, `assignee`, `state`, `priority`, `team`, `project`, `parent`, `labels` |
-| `update` | `issueId` | `title`, `description`, `appendDescription`, `assignee`, `state`, `priority`, `labels`, `project` |
+| `create` | `title` | `description`, `assignee`, `state`, `priority`, `team`, `project`, `parent`, `labels`, `dueDate` |
+| `update` | `issueId` | `title`, `description`, `appendDescription`, `assignee`, `state`, `priority`, `labels`, `project`, `dueDate` |
 | `delete` | `issueId` | — |
 
 - `issueId` accepts human-readable identifiers like `ENG-123`
@@ -66,6 +66,7 @@ Manage Linear issues: view details, search/filter, create, update, and delete.
 - `labels` is an array of label names
 - `parent` accepts a parent issue identifier for creating sub-issues
 - `appendDescription` (boolean) — when true, appends `description` to the existing description instead of replacing it (update only)
+- `dueDate` accepts a date string in `YYYY-MM-DD` format (e.g. `2025-12-31`); pass an empty string to clear the due date
 - `description` supports markdown. **Use actual newlines for line breaks, not `\n` escape sequences** — literal `\n` will appear as-is in the ticket instead of creating line breaks
 
 ### `linear_comment` — manage comments

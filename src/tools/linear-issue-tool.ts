@@ -72,6 +72,12 @@ const Params = Type.Object({
   labels: Type.Optional(
     Type.Array(Type.String(), { description: "Label names." }),
   ),
+  dueDate: Type.Optional(
+    Type.String({
+      description:
+        "Due date in YYYY-MM-DD format (e.g. 2025-12-31). Pass null or empty string to clear.",
+    }),
+  ),
   limit: Type.Optional(
     Type.Number({
       description: "Max results for list (default 50).",
@@ -132,6 +138,7 @@ async function viewIssue(params: Params) {
         priority
         priorityLabel
         estimate
+        dueDate
         createdAt
         updatedAt
         state { id name type }
@@ -204,6 +211,7 @@ async function listIssues(params: Params) {
           team { key }
           project { name }
           labels { nodes { name } }
+          dueDate
           updatedAt
         }
       }
@@ -255,6 +263,7 @@ async function createIssue(params: Params) {
       params.labels,
     );
   }
+  if (params.dueDate !== undefined) input.dueDate = params.dueDate || null;
 
   const data = await graphql<{
     issueCreate: {
@@ -308,6 +317,7 @@ async function updateIssue(params: Params) {
   if (params.labels?.length) {
     input.labelIds = await resolveLabelIds(teamId!, params.labels);
   }
+  if (params.dueDate !== undefined) input.dueDate = params.dueDate || null;
 
   const data = await graphql<{
     issueUpdate: {
