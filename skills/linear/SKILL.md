@@ -1,7 +1,7 @@
 ---
 name: linear
 description: Linear project management integration. Provides tools for processing a notification queue, managing issues, comments, teams, projects, and issue relations via the Linear GraphQL API.
-metadata: { "openclaw": { "always": true } }
+metadata: { "openclaw": { "always": true, "emoji": "📐", "requires": { "config": ["extensions.openclaw-linear"] } } }
 ---
 
 # Linear
