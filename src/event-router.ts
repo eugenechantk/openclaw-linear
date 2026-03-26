@@ -380,6 +380,19 @@ function handleComment(
     return [];
   }
 
+  // Skip comments authored by mapped agents to prevent webhook loops.
+  // When an agent posts a comment via the Linear API, the webhook fires
+  // back with the agent's userId as the comment author. Without this
+  // check, the agent would be woken up by its own comment.
+  const commentUserId = (event.data.user as Record<string, unknown> | undefined)?.id as string | undefined
+    ?? event.data.userId as string | undefined;
+  if (commentUserId && config.agentMapping[commentUserId]) {
+    config.logger.info(
+      `Skipping self-comment from agent ${config.agentMapping[commentUserId]} on ${String(event.data.id ?? "unknown")}`,
+    );
+    return [];
+  }
+
   const commentId = String(event.data.id ?? "");
   const bodyData = event.data.bodyData;
   const mentionedIds = extractMentionedUserIds(body, bodyData, config.agentMapping);
