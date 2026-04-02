@@ -305,6 +305,7 @@ export function activate(api: OpenClawPluginApi): void {
   api.registerHttpRoute({
     path: "/hooks/linear",
     handler,
+    auth: "plugin",
   });
 
   api.logger.info(
