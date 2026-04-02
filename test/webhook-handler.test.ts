@@ -201,6 +201,65 @@ describe("webhook-handler", () => {
     );
   });
 
+  it("accepts signature when webhookSecret is an array", async () => {
+    const secrets = ["secret-a", "secret-b", SECRET];
+    const h = createWebhookHandler({ webhookSecret: secrets, logger });
+
+    const body = JSON.stringify({
+      action: "create",
+      type: "Issue",
+      data: { id: "issue-multi" },
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+    // Sign with SECRET (the third secret)
+    const req = makeReq(body, { "Linear-Signature": sign(body) });
+    const res = makeRes();
+    await h(req, res);
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("rejects signature when none of the secrets match", async () => {
+    const secrets = ["secret-a", "secret-b"];
+    const h = createWebhookHandler({ webhookSecret: secrets, logger });
+
+    const body = JSON.stringify({
+      action: "create",
+      type: "Issue",
+      data: { id: "issue-bad" },
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+    // Sign with SECRET which is NOT in the array
+    const req = makeReq(body, { "Linear-Signature": sign(body) });
+    const res = makeRes();
+    await h(req, res);
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("falls back to full payload when data field is missing", async () => {
+    const onEvent = vi.fn();
+    const h = createWebhookHandler({ webhookSecret: SECRET, logger, onEvent });
+
+    // Simulate an OAuth App webhook that has no nested `data` field
+    const body = JSON.stringify({
+      action: "create",
+      type: "AgentSession",
+      id: "session-1",
+      agentId: "agent-1",
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+    const req = makeReq(body, { "Linear-Signature": sign(body) });
+    const res = makeRes();
+    await h(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // data should be the full payload since payload.data is undefined
+        data: expect.objectContaining({ id: "session-1", agentId: "agent-1" }),
+      }),
+    );
+  });
+
   it("returns 413 for oversized request body", async () => {
     const req = new EventEmitter() as IncomingMessage;
     req.method = "POST";

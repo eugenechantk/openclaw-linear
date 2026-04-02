@@ -858,6 +858,74 @@ describe("event-router", () => {
     });
   });
 
+  describe("self-comment skip", () => {
+    it("skips comments authored by a mapped agent (user field)", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Comment",
+        action: "create",
+        data: {
+          id: "comment-self-1",
+          body: "Hey @user-2 what do you think?",
+          user: { id: "user-1" },
+          issue: { id: "issue-600" },
+        },
+        createdAt: new Date().toISOString(),
+      };
+
+      // user-1 is a mapped agent, so this comment should be skipped
+      const actions = route(event);
+      expect(actions).toEqual([]);
+      expect(config.logger.info).toHaveBeenCalledWith(
+        expect.stringContaining("Skipping self-comment from agent agent-1"),
+      );
+    });
+
+    it("skips comments authored by a mapped agent (userId field)", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Comment",
+        action: "create",
+        data: {
+          id: "comment-self-2",
+          body: "Hey @user-2 thoughts?",
+          userId: "user-1",
+          issue: { id: "issue-601" },
+        },
+        createdAt: new Date().toISOString(),
+      };
+
+      const actions = route(event);
+      expect(actions).toEqual([]);
+    });
+
+    it("does not skip comments from non-agent users", () => {
+      const config = makeConfig();
+      const route = createEventRouter(config);
+
+      const event: LinearWebhookPayload = {
+        type: "Comment",
+        action: "create",
+        data: {
+          id: "comment-human",
+          body: "Hey @user-1 can you check?",
+          user: { id: "human-user-123" },
+          issue: { id: "issue-602" },
+        },
+        createdAt: new Date().toISOString(),
+      };
+
+      // human-user-123 is NOT in agentMapping, so the comment should be routed
+      const actions = route(event);
+      expect(actions).toHaveLength(1);
+      expect(actions[0].agentId).toBe("agent-1");
+    });
+  });
+
   describe("unrelated events", () => {
     it("returns empty for non-issue non-comment events", () => {
       const config = makeConfig();

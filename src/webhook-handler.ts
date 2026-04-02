@@ -11,7 +11,7 @@ export type LinearWebhookPayload = {
 };
 
 type WebhookHandlerDeps = {
-  webhookSecret: string;
+  webhookSecret: string | string[];
   logger: {
     info: (message: string) => void;
     error: (message: string) => void;
@@ -93,7 +93,9 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     }
 
     const signature = req.headers["linear-signature"];
-    if (typeof signature !== "string" || !verifySignature(rawBody, signature, deps.webhookSecret)) {
+    const secrets = Array.isArray(deps.webhookSecret) ? deps.webhookSecret : [deps.webhookSecret];
+    const signatureValid = typeof signature === "string" && secrets.some((s) => verifySignature(rawBody, signature, s));
+    if (!signatureValid) {
       res.writeHead(400);
       res.end("Invalid signature");
       return;
@@ -120,7 +122,10 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
       event = {
         action: String(payload.action ?? ""),
         type: String(payload.type ?? ""),
-        data: (payload.data as Record<string, unknown>) ?? {},
+        // Some Linear webhook payloads (e.g. OAuth App events) place fields
+        // directly on the top-level object instead of nesting under `data`.
+        // Fall back to the full payload so downstream handlers still see data.
+        data: (payload.data as Record<string, unknown>) ?? payload,
         updatedFrom: (payload.updatedFrom as Record<string, unknown>) ?? undefined,
         createdAt: String(payload.createdAt ?? ""),
       };
