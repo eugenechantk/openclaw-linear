@@ -1,6 +1,6 @@
 ---
 name: linear
-description: Linear project management integration. Provides tools for processing a notification queue, managing issues, comments, teams, projects, and issue relations via the Linear GraphQL API.
+description: Linear project management integration. Provides tools for issue-scoped work lifecycle, issues, comments, teams, projects, and issue relations via the Linear GraphQL API.
 metadata: { "openclaw": { "always": true, "emoji": "📐", "requires": { "config": ["extensions.openclaw-linear"] } } }
 ---
 
@@ -10,41 +10,26 @@ You have Linear tools for managing issues and responding to notifications. These
 
 ## Tools
 
-### `linear_queue` — notification inbox
+### `linear_issue_work` — issue work lifecycle
 
-Manages the queue of Linear notifications routed to you by webhooks.
+Inspects and completes deterministic issue-scoped work records routed by webhooks. Normal Linear sessions should use this tool for lifecycle operations.
 
 | Action | Effect |
 |---|---|
-| `peek` | View all pending items sorted by priority. Non-destructive. |
-| `pop` | Claim the highest-priority pending item (marks it `in_progress`). |
-| `drain` | Claim all pending items (marks them `in_progress`). |
-| `complete` | Finish work on a claimed item (requires `issueId`). Removes it from the queue. |
+| `view` | View one issue work record and recent Codex runs. |
+| `complete` | Ask the dispatcher to reconcile completed work for an issue. |
+| `recover` | Recover expired issue work leases. |
+| `debug` | Read recent JSONL debug entries by issue, session, or webhook delivery. |
 
-Queue items have this shape:
+Issue work records are keyed by Linear issue identifier and include the session key, current intent, active/pending event IDs, follow-up comment IDs, Codex thread/run continuity, and lease state.
 
-```json
-{
-  "id": "TEAM-123",
-  "issueId": "TEAM-123",
-  "event": "ticket",
-  "summary": "Issue title or comment text",
-  "priority": 1,
-  "status": "pending",
-  "addedAt": "ISO timestamp"
-}
-```
+Use `issueId` when calling `linear_issue_work`, `linear_issue`, or `linear_comment`.
 
-Event types:
+### `linear_queue` — compatibility/debug only
 
-| Event | Meaning |
-|---|---|
-| `ticket` | You have a ticket to work on. |
-| `mention` | You were mentioned in a comment. |
+The old global queue-shaped tool remains for compatibility and manual debugging. Normal sessions should not `peek`, `claim`, `pop`, or `drain` this tool. If legacy instructions still call `linear_queue complete`, it delegates to the same dispatcher completion path as `linear_issue_work complete`.
 
-For `ticket` events, `id` and `issueId` are the same (the issue identifier). For `mention` events, `id` is the comment ID and `issueId` is the parent issue identifier. Always use `issueId` when calling `linear_issue`, `linear_comment`, or `linear_queue complete`.
-
-Priority maps from the Linear issue (1=Urgent, 2=High, 3=Medium, 4=Low, 5=None). Mentions always get priority 0, so they are processed before any ticket. Higher-priority items are popped first.
+Do not use `linear_queue` as the primary workflow.
 
 ### `linear_issue` — manage issues
 
@@ -119,13 +104,8 @@ Manage relations between Linear issues (blocks, blocked-by, related, duplicate).
 
 When you receive a Linear notification:
 
-1. **Peek** with `linear_queue { action: "peek" }` to see all pending items.
-2. **Skip** if there are no items.
-3. **Pop** the next item with `linear_queue { action: "pop" }`. This claims it (status becomes `in_progress`).
-4. **Read** the issue with `linear_issue { action: "view", issueId: "<id>" }`.
-5. **Read comments** with `linear_comment { action: "list", issueId: "<id>" }` if the event is a mention or you need discussion context.
-6. **Act** on the item:
-   - `ticket` — do the work, then update state with `linear_issue { action: "update", ... }`.
-   - `mention` — read the thread and reply with `linear_comment { action: "add", ... }`.
-7. **Complete** with `linear_queue { action: "complete", issueId: "<id>" }` to remove it from the queue.
-8. **Repeat** from step 3 until pop returns null.
+1. Read the dispatcher-provided issue work packet. The dispatcher already claimed the work.
+2. Read the issue with `linear_issue { action: "view", issueId: "<id>" }`.
+3. Read comments with `linear_comment { action: "list", issueId: "<id>" }` when discussion context matters.
+4. Act on the issue or follow-up.
+5. Complete with `linear_issue_work { action: "complete", issueId: "<id>" }`.

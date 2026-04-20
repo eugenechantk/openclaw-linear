@@ -217,6 +217,61 @@ describe("InboxQueue.pop", () => {
   });
 });
 
+// --- InboxQueue.claim ---
+
+describe("InboxQueue.claim", () => {
+  it("returns null for empty queue", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    expect(await queue.claim("ENG-42")).toBeNull();
+  });
+
+  it("claims the highest-priority pending item for the requested issue only", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([
+      { id: "comment-1", issueId: "ENG-42", event: "comment.mention", summary: "follow-up", issuePriority: 4 },
+      entry("ENG-43", "issue.assigned", "urgent other issue", 1),
+      entry("ENG-42", "issue.assigned", "target ticket", 3),
+    ]);
+
+    const item = await queue.claim("ENG-42");
+    expect(item).toMatchObject({
+      id: "comment-1",
+      issueId: "ENG-42",
+      event: "mention",
+      status: "in_progress",
+    });
+
+    const onDisk = readItems();
+    expect(onDisk.find((i) => i.id === "comment-1")!.status).toBe("in_progress");
+    expect(onDisk.find((i) => i.id === "ENG-42")!.status).toBe("pending");
+    expect(onDisk.find((i) => i.id === "ENG-43")!.status).toBe("pending");
+  });
+
+  it("skips in_progress items for the requested issue", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([
+      { id: "comment-1", issueId: "ENG-42", event: "comment.mention", summary: "first", issuePriority: 4 },
+      { id: "comment-2", issueId: "ENG-42", event: "comment.mention", summary: "second", issuePriority: 4 },
+    ]);
+
+    const first = await queue.claim("ENG-42");
+    expect(first!.id).toBe("comment-1");
+
+    const second = await queue.claim("ENG-42");
+    expect(second!.id).toBe("comment-2");
+
+    expect(await queue.claim("ENG-42")).toBeNull();
+  });
+
+  it("returns null when only other issues have pending items", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([entry("ENG-43", "issue.assigned", "other issue", 1)]);
+
+    expect(await queue.claim("ENG-42")).toBeNull();
+    expect((await queue.peek()).map((i) => i.issueId)).toEqual(["ENG-43"]);
+  });
+});
+
 // --- InboxQueue.peek ---
 
 describe("InboxQueue.peek", () => {
@@ -586,5 +641,19 @@ describe("InboxQueue mutex serialization", () => {
     const onDisk = readItems();
     expect(onDisk).toHaveLength(2);
     expect(onDisk.every((i) => i.status === "in_progress")).toBe(true);
+  });
+
+  it("serializes concurrent claim calls for the same issue", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([
+      { id: "comment-1", issueId: "ENG-42", event: "comment.mention", summary: "first", issuePriority: 4 },
+      { id: "comment-2", issueId: "ENG-42", event: "comment.mention", summary: "second", issuePriority: 4 },
+    ]);
+
+    const [a, b] = await Promise.all([queue.claim("ENG-42"), queue.claim("ENG-42")]);
+    const results = [a, b].filter(Boolean);
+    expect(results).toHaveLength(2);
+    expect(results.map((r) => r!.id).sort()).toEqual(["comment-1", "comment-2"]);
+    expect(await queue.claim("ENG-42")).toBeNull();
   });
 });

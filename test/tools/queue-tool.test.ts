@@ -1,7 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { InboxQueue, type EnqueueEntry } from "../../src/work-queue.js";
+
+vi.mock("openclaw/plugin-sdk/agent-runtime", () => ({
+  jsonResult: (data: unknown) => ({
+    content: [{ type: "text", text: JSON.stringify(data) }],
+  }),
+  stringEnum: (values: readonly string[]) => ({ enum: values }),
+}));
+
 import { createQueueTool } from "../../src/tools/queue-tool.js";
 
 const TMP_DIR = join(import.meta.dirname ?? __dirname, "../../.test-tmp-tool");
@@ -35,6 +43,7 @@ describe("linear_queue tool", () => {
     const tool = createQueueTool(queue);
     expect(tool.name).toBe("linear_queue");
     expect(tool.description).toContain("peek");
+    expect(tool.description).toContain("claim");
     expect(tool.description).toContain("pop");
     expect(tool.description).toContain("drain");
     expect(tool.description).toContain("complete");
@@ -56,6 +65,16 @@ describe("linear_queue tool", () => {
     const data = parse(result);
     expect(data.item).toBeNull();
     expect(data.message).toBe("Queue is empty");
+  });
+
+  it("claim returns null item on empty queue", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    const tool = createQueueTool(queue);
+    const result = await tool.execute("call-1", { action: "claim", issueId: "ENG-42" });
+    const data = parse(result);
+    expect(data.item).toBeNull();
+    expect(data.issueId).toBe("ENG-42");
+    expect(data.message).toBe("No pending item for issue");
   });
 
   it("drain returns empty items on empty queue", async () => {
@@ -93,6 +112,33 @@ describe("linear_queue tool", () => {
     expect(parse(peek).count).toBe(0);
   });
 
+  it("claim claims and returns only the requested issue item", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    await queue.enqueue([
+      entry("ENG-43", "issue.assigned", "Other issue", 1),
+      entry("ENG-42", "issue.assigned", "Target issue", 3),
+    ]);
+    const tool = createQueueTool(queue);
+
+    const result = await tool.execute("call-1", { action: "claim", issueId: "ENG-42" });
+    const data = parse(result);
+    expect(data.item.id).toBe("ENG-42");
+    expect(data.item.status).toBe("in_progress");
+
+    const peek = await tool.execute("call-2", { action: "peek" });
+    const pending = parse(peek).items;
+    expect(pending).toHaveLength(1);
+    expect(pending[0].id).toBe("ENG-43");
+  });
+
+  it("claim without issueId returns error", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    const tool = createQueueTool(queue);
+    const result = await tool.execute("call-1", { action: "claim" });
+    const data = parse(result);
+    expect(data.error).toContain("issueId is required");
+  });
+
   it("drain claims all items", async () => {
     const queue = new InboxQueue(QUEUE_PATH);
     await queue.enqueue([
@@ -121,6 +167,50 @@ describe("linear_queue tool", () => {
     expect(data.completed).toBe(true);
     expect(data.issueId).toBe("ENG-42");
     expect(data.remaining).toBe(0);
+  });
+
+  it("complete action can delegate completion to the issue work dispatcher", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    const completeIssueWork = vi.fn(async () => ({
+      type: "completed",
+      issueId: "ENG-42",
+      transition: "in_review",
+    }));
+    await queue.enqueue([entry("ENG-99", "issue.assigned", "Other bug", 2)]);
+
+    const tool = createQueueTool(queue, { completeIssueWork });
+    const result = await tool.execute("call-1", { action: "complete", issueId: "ENG-42" });
+    const data = parse(result);
+
+    expect(completeIssueWork).toHaveBeenCalledWith("ENG-42");
+    expect(data.completed).toBe(true);
+    expect(data.issueId).toBe("ENG-42");
+    expect(data.remaining).toBe(1);
+    expect(data.decision).toMatchObject({
+      type: "completed",
+      issueId: "ENG-42",
+      transition: "in_review",
+    });
+  });
+
+  it("complete action reports not completed dispatcher decisions", async () => {
+    const queue = new InboxQueue(QUEUE_PATH);
+    const completeIssueWork = vi.fn(async () => ({
+      type: "not_completed",
+      issueId: "ENG-42",
+      reason: "codex_still_running",
+    }));
+
+    const tool = createQueueTool(queue, { completeIssueWork });
+    const result = await tool.execute("call-1", { action: "complete", issueId: "ENG-42" });
+    const data = parse(result);
+
+    expect(data.completed).toBe(false);
+    expect(data.decision).toMatchObject({
+      type: "not_completed",
+      issueId: "ENG-42",
+      reason: "codex_still_running",
+    });
   });
 
   it("complete without issueId returns error", async () => {

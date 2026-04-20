@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
+import type { WebhookEventStore } from "./webhook-event-store.js";
 
 export type LinearWebhookPayload = {
   action: string;
@@ -8,6 +9,7 @@ export type LinearWebhookPayload = {
   data: Record<string, unknown>;
   updatedFrom?: Record<string, unknown>;
   createdAt: string;
+  deliveryId?: string;
 };
 
 type WebhookHandlerDeps = {
@@ -16,12 +18,11 @@ type WebhookHandlerDeps = {
     info: (message: string) => void;
     error: (message: string) => void;
   };
-  onEvent?: (event: LinearWebhookPayload) => void;
+  eventStore?: WebhookEventStore;
+  onEvent?: (event: LinearWebhookPayload) => void | Promise<void>;
 };
 
 const MAX_BODY_BYTES = 1024 * 1024; // 1 MB
-const DEDUP_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const DEDUP_MAX_SIZE = 10_000;
 
 function verifySignature(body: string, signature: string, secret: string): boolean {
   const expected = createHmac("sha256", secret).update(body).digest("hex");
@@ -50,26 +51,6 @@ function readBody(req: IncomingMessage): Promise<string> {
 }
 
 export function createWebhookHandler(deps: WebhookHandlerDeps) {
-  /** Map of delivery ID → timestamp for duplicate detection with TTL. */
-  const processedDeliveries = new Map<string, number>();
-
-  function pruneDeliveries(): void {
-    const now = Date.now();
-    for (const [id, ts] of processedDeliveries) {
-      if (now - ts > DEDUP_TTL_MS) {
-        processedDeliveries.delete(id);
-      }
-    }
-    if (processedDeliveries.size > DEDUP_MAX_SIZE) {
-      const excess = processedDeliveries.size - DEDUP_MAX_SIZE;
-      const iter = processedDeliveries.keys();
-      for (let i = 0; i < excess; i++) {
-        const key = iter.next().value;
-        if (key !== undefined) processedDeliveries.delete(key);
-      }
-    }
-  }
-
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (req.method !== "POST") {
       res.writeHead(405, { Allow: "POST" });
@@ -105,18 +86,27 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     try {
       const payload = JSON.parse(rawBody) as Record<string, unknown>;
       const deliveryId = req.headers["linear-delivery"] as string | undefined;
+      const data = (payload.data as Record<string, unknown>) ?? payload;
 
-      // Prune expired entries periodically
-      pruneDeliveries();
-
-      if (deliveryId) {
-        if (processedDeliveries.has(deliveryId)) {
+      if (deliveryId && deps.eventStore) {
+        const issue = data.issue as Record<string, unknown> | undefined;
+        const user = data.user as Record<string, unknown> | undefined;
+        const inserted = deps.eventStore.insert({
+          deliveryId,
+          action: String(payload.action ?? ""),
+          type: String(payload.type ?? ""),
+          issueId: String(issue?.id ?? data.issueId ?? data.id ?? ""),
+          commentId: String(payload.type ?? "") === "Comment" ? String(data.id ?? "") : undefined,
+          actorId: (user?.id as string | undefined) ?? (data.userId as string | undefined),
+          createdAt: String(payload.createdAt ?? ""),
+          rawBody,
+        });
+        if (!inserted.inserted) {
           deps.logger.info(`Duplicate delivery skipped: ${deliveryId}`);
           res.writeHead(200);
           res.end("OK");
           return;
         }
-        processedDeliveries.set(deliveryId, Date.now());
       }
 
       event = {
@@ -125,9 +115,10 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
         // Some Linear webhook payloads (e.g. OAuth App events) place fields
         // directly on the top-level object instead of nesting under `data`.
         // Fall back to the full payload so downstream handlers still see data.
-        data: (payload.data as Record<string, unknown>) ?? payload,
+        data,
         updatedFrom: (payload.updatedFrom as Record<string, unknown>) ?? undefined,
         createdAt: String(payload.createdAt ?? ""),
+        deliveryId,
       };
 
       deps.logger.info(`Linear webhook: ${event.action} ${event.type} (${String(event.data.id ?? "unknown")})`);
@@ -144,7 +135,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     res.end("OK");
 
     try {
-      deps.onEvent?.(event);
+      await deps.onEvent?.(event);
     } catch (err) {
       deps.logger.error(`Event handler error: ${formatErrorMessage(err)}`);
     }

@@ -21,6 +21,21 @@ export interface QueueItem {
   priority: number;
   addedAt: string;
   status: "pending" | "in_progress";
+  linearIssueUuid?: string | null;
+  sessionKey?: string | null;
+  codexThreadId?: string | null;
+  activeCodexRunId?: string | null;
+  workspace?: string | null;
+  workStatus?: string | null;
+  currentIntent?: string | null;
+  lastProcessedEventTime?: string | null;
+  lastProcessedCommentId?: string | null;
+  lastHumanCommentId?: string | null;
+  lastOpenClawCommentId?: string | null;
+  pendingFollowUpCommentIds?: string[];
+  pendingFollowUpCount?: number;
+  leaseOwner?: string | null;
+  leaseExpiresAt?: string | null;
 }
 
 export const QUEUE_EVENT: Record<string, string> = {
@@ -40,9 +55,12 @@ export interface EnqueueEntry {
   id: string;
   /** Issue identifier for queue display and completion. Defaults to `id`. */
   issueId?: string;
+  linearIssueUuid?: string;
   event: string;
   summary: string;
   issuePriority: number;
+  commentBody?: string;
+  createdAt?: string;
 }
 
 /** Map Linear priority (0=none) so no-priority sorts last. */
@@ -228,6 +246,25 @@ export class InboxQueue {
       const items = readJsonl(this.path);
       const pending = items
         .filter((i) => i.status === "pending")
+        .sort((a, b) => a.priority - b.priority || a.addedAt.localeCompare(b.addedAt));
+      if (pending.length === 0) return null;
+
+      const claimed = pending[0];
+      claimed.status = "in_progress";
+      writeJsonl(this.path, items);
+      return claimed;
+    } finally {
+      release();
+    }
+  }
+
+  /** Claim the highest-priority pending item for one issueId, or null if none pending. */
+  async claim(issueId: string): Promise<QueueItem | null> {
+    const release = await this.mutex.acquire();
+    try {
+      const items = readJsonl(this.path);
+      const pending = items
+        .filter((i) => i.issueId === issueId && i.status === "pending")
         .sort((a, b) => a.priority - b.priority || a.addedAt.localeCompare(b.addedAt));
       if (pending.length === 0) return null;
 

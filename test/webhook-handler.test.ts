@@ -1,10 +1,15 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createHmac } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { createWebhookHandler } from "../src/webhook-handler.js";
+import { WebhookEventStore } from "../src/webhook-event-store.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 const SECRET = "test-webhook-secret";
+const TMP_DIR = join(import.meta.dirname ?? __dirname, "../.test-tmp-webhook-handler");
+const EVENT_DB_PATH = join(TMP_DIR, "webhook-events.sqlite");
 
 function makeLogger() {
   return { info: vi.fn(), error: vi.fn() };
@@ -51,8 +56,13 @@ describe("webhook-handler", () => {
   let handler: ReturnType<typeof createWebhookHandler>;
 
   beforeEach(() => {
+    mkdirSync(TMP_DIR, { recursive: true });
     logger = makeLogger();
     handler = createWebhookHandler({ webhookSecret: SECRET, logger });
+  });
+
+  afterEach(() => {
+    rmSync(TMP_DIR, { recursive: true, force: true });
   });
 
   it("returns 200 for valid signature", async () => {
@@ -90,6 +100,8 @@ describe("webhook-handler", () => {
   });
 
   it("detects and skips duplicate deliveries", async () => {
+    const eventStore = new WebhookEventStore(EVENT_DB_PATH);
+    handler = createWebhookHandler({ webhookSecret: SECRET, logger, eventStore });
     const body = JSON.stringify({
       action: "update",
       type: "Issue",
@@ -114,6 +126,39 @@ describe("webhook-handler", () => {
     expect(res2.statusCode).toBe(200);
     expect(logger.info).toHaveBeenCalledWith(
       "Duplicate delivery skipped: delivery-dup-test-123",
+    );
+  });
+
+  it("detects duplicate deliveries after handler restart when eventStore is configured", async () => {
+    const eventStore = new WebhookEventStore(EVENT_DB_PATH);
+    const onEvent = vi.fn();
+    const body = JSON.stringify({
+      action: "update",
+      type: "Issue",
+      data: { id: "issue-2" },
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+    const headers = {
+      "Linear-Signature": sign(body),
+      "Linear-Delivery": "delivery-durable-test-123",
+    };
+
+    const firstHandler = createWebhookHandler({ webhookSecret: SECRET, logger, eventStore, onEvent });
+    const req1 = makeReq(body, headers);
+    const res1 = makeRes();
+    await firstHandler(req1, res1);
+    expect(res1.statusCode).toBe(200);
+
+    const restartedStore = new WebhookEventStore(EVENT_DB_PATH);
+    const restartedHandler = createWebhookHandler({ webhookSecret: SECRET, logger, eventStore: restartedStore, onEvent });
+    const req2 = makeReq(body, headers);
+    const res2 = makeRes();
+    await restartedHandler(req2, res2);
+
+    expect(res2.statusCode).toBe(200);
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(logger.info).toHaveBeenCalledWith(
+      "Duplicate delivery skipped: delivery-durable-test-123",
     );
   });
 

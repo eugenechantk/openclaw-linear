@@ -14,6 +14,8 @@
   "files": [
     "dist",
     "skills",
+    "scripts",
+    "schema.sql",
     "openclaw.plugin.json",
     "LICENSE",
     "README.md"
@@ -21,6 +23,8 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
+    "debug": "node scripts/debug-linear.mjs",
+    "init-db": "node scripts/init-sqlite.mjs",
     "prepack": "npm run build",
     "test": "vitest run"
   },

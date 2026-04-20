@@ -32,9 +32,38 @@
         "additionalProperties": { "type": "string" },
         "description": "Map Linear user IDs to OpenClaw agent IDs for routing (e.g. {\"linear-user-uuid\": \"agent-name\"})"
       },
+      "defaultAgentId": {
+        "type": "string",
+        "description": "OpenClaw agent ID used when a Linear event has no mapped assignee. Defaults to main."
+      },
+      "openclawActorId": {
+        "type": "string",
+        "description": "Linear actor/user ID for the OpenClaw machine account. Comments authored by this actor are ignored before routing."
+      },
+      "ignoredActorIds": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Additional Linear actor/user IDs to ignore before routing."
+      },
       "debounceMs": {
         "type": "integer",
         "description": "Debounce window in milliseconds for batching webhook events before dispatch (default: 30000)"
+      },
+      "sqlitePath": {
+        "type": "string",
+        "description": "Optional SQLite state path. Relative paths resolve under OPENCLAW_HOME or ~/.openclaw. Defaults to queue/linear.sqlite."
+      },
+      "debugLogPath": {
+        "type": "string",
+        "description": "Optional JSONL debug log root. Relative paths resolve under OPENCLAW_HOME or ~/.openclaw. Defaults to state/linear-debug."
+      },
+      "reopenState": {
+        "type": "string",
+        "description": "Workflow state used when a human comments on a completed issue. Defaults to In Progress."
+      },
+      "completeState": {
+        "type": "string",
+        "description": "Workflow state used after an issue queue item completes with no pending work for the same issue. Defaults to In Review."
       },
       "stateActions": {
         "type": "object",

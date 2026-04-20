@@ -184,8 +184,8 @@ describe("event-router", () => {
       ]);
     });
 
-    it("returns empty for create without assignee", () => {
-      const config = makeConfig();
+    it("routes create without assignee to the default agent", () => {
+      const config = makeConfig(undefined, { defaultAgentId: "linear-worker" });
       const route = createEventRouter(config);
 
       const event: LinearWebhookPayload = {
@@ -195,11 +195,20 @@ describe("event-router", () => {
         createdAt: new Date().toISOString(),
       };
 
-      expect(route(event)).toEqual([]);
+      expect(route(event)).toMatchObject([
+        {
+          type: "wake",
+          agentId: "linear-worker",
+          event: "issue.assigned",
+          issueId: "issue-unassigned",
+          identifier: "issue-unassigned",
+          linearUserId: "default",
+        },
+      ]);
     });
 
-    it("logs unmapped user on create with assignee", () => {
-      const config = makeConfig({});
+    it("routes create with unmapped assignee to the default agent", () => {
+      const config = makeConfig({}, { defaultAgentId: "linear-worker" });
       const route = createEventRouter(config);
 
       const event: LinearWebhookPayload = {
@@ -209,9 +218,18 @@ describe("event-router", () => {
         createdAt: new Date().toISOString(),
       };
 
-      expect(route(event)).toEqual([]);
+      expect(route(event)).toMatchObject([
+        {
+          type: "wake",
+          agentId: "linear-worker",
+          event: "issue.assigned",
+          issueId: "issue-unk",
+          identifier: "issue-unk",
+          linearUserId: "unknown-user",
+        },
+      ]);
       expect(config.logger.info).toHaveBeenCalledWith(
-        "Unmapped Linear user unknown-user assigned to issue-unk",
+        "Unmapped Linear user unknown-user on issue-unk — defaulting to linear-worker",
       );
     });
   });
@@ -576,8 +594,8 @@ describe("event-router", () => {
     });
   });
 
-  describe("comment mentions", () => {
-    it("routes @mention in comment as wake event", () => {
+  describe("comments", () => {
+    it("routes a comment to the issue session default agent when no assignee is present", () => {
       const config = makeConfig();
       const route = createEventRouter(config);
 
@@ -596,19 +614,19 @@ describe("event-router", () => {
       expect(actions).toHaveLength(1);
       expect(actions[0]).toMatchObject({
         type: "wake",
-        agentId: "agent-1",
+        agentId: "main",
         event: "comment.mention",
         issueId: "issue-789",
         identifier: "issue-789",
         issuePriority: 0,
-        linearUserId: "user-1",
+        linearUserId: "default",
         commentId: "comment-abc",
       });
-      expect(actions[0].detail).toContain("Mentioned in comment on issue");
+      expect(actions[0].detail).toContain("New comment on issue");
       expect(actions[0].detail).toContain("Hey @user-1 can you look at this?");
     });
 
-    it("routes multiple mentions to multiple agents", () => {
+    it("routes a comment to one issue session even when the body mentions multiple users", () => {
       const config = makeConfig();
       const route = createEventRouter(config);
 
@@ -623,12 +641,11 @@ describe("event-router", () => {
       };
 
       const actions = route(event);
-      expect(actions).toHaveLength(2);
-      expect(actions[0].agentId).toBe("agent-1");
-      expect(actions[1].agentId).toBe("agent-2");
+      expect(actions).toHaveLength(1);
+      expect(actions[0].agentId).toBe("main");
     });
 
-    it("extracts mentions from ProseMirror bodyData when available", () => {
+    it("routes by issue session rather than ProseMirror mentions", () => {
       const config = makeConfig();
       const route = createEventRouter(config);
 
@@ -661,12 +678,12 @@ describe("event-router", () => {
       const actions = route(event);
       expect(actions).toHaveLength(1);
       expect(actions[0]).toMatchObject({
-        agentId: "agent-1",
-        linearUserId: "user-1",
+        agentId: "main",
+        linearUserId: "default",
       });
     });
 
-    it("deduplicates mentions from ProseMirror bodyData", () => {
+    it("does not create duplicate actions for repeated mentions in bodyData", () => {
       const config = makeConfig();
       const route = createEventRouter(config);
 
@@ -703,7 +720,7 @@ describe("event-router", () => {
       expect(actions).toHaveLength(1);
     });
 
-    it("resolves display name to UUID via reverse lookup when bodyData is missing", () => {
+    it("does not use display-name mentions as routing targets", () => {
       const config = makeConfig({
         "uuid-abc-123": "juno",
         "uuid-def-456": "titus",
@@ -725,14 +742,14 @@ describe("event-router", () => {
       expect(actions).toHaveLength(1);
       expect(actions[0]).toMatchObject({
         type: "wake",
-        agentId: "juno",
+        agentId: "main",
         event: "comment.mention",
-        linearUserId: "uuid-abc-123",
+        linearUserId: "default",
         commentId: "comment-reverse",
       });
     });
 
-    it("resolves display name case-insensitively via reverse lookup", () => {
+    it("ignores display-name mention casing for routing", () => {
       const config = makeConfig({
         "uuid-abc-123": "Juno",
       });
@@ -751,10 +768,10 @@ describe("event-router", () => {
 
       const actions = route(event);
       expect(actions).toHaveLength(1);
-      expect(actions[0].linearUserId).toBe("uuid-abc-123");
+      expect(actions[0].linearUserId).toBe("default");
     });
 
-    it("resolves multiple display names via reverse lookup when bodyData is empty", () => {
+    it("keeps multiple display-name mentions in one issue-session action", () => {
       const config = makeConfig({
         "uuid-abc-123": "juno",
         "uuid-def-456": "titus",
@@ -782,12 +799,11 @@ describe("event-router", () => {
       };
 
       const actions = route(event);
-      expect(actions).toHaveLength(2);
-      expect(actions[0].linearUserId).toBe("uuid-abc-123");
-      expect(actions[1].linearUserId).toBe("uuid-def-456");
+      expect(actions).toHaveLength(1);
+      expect(actions[0].linearUserId).toBe("default");
     });
 
-    it("falls back to regex when bodyData has no mentions", () => {
+    it("routes to the issue assignee when the comment issue has a mapped assignee", () => {
       const config = makeConfig();
       const route = createEventRouter(config);
 
@@ -805,7 +821,7 @@ describe("event-router", () => {
               },
             ],
           },
-          issue: { id: "issue-500" },
+          issue: { id: "issue-500", assigneeId: "user-1" },
         },
         createdAt: new Date().toISOString(),
       };
@@ -813,6 +829,7 @@ describe("event-router", () => {
       const actions = route(event);
       expect(actions).toHaveLength(1);
       expect(actions[0].agentId).toBe("agent-1");
+      expect(actions[0].linearUserId).toBe("user-1");
     });
   });
 
@@ -836,8 +853,8 @@ describe("event-router", () => {
       );
     });
 
-    it("logs unmapped user on comment mention and returns no actions", () => {
-      const config = makeConfig({});
+    it("routes comments with no mapped assignee to the default agent", () => {
+      const config = makeConfig({}, { defaultAgentId: "linear-worker" });
       const route = createEventRouter(config);
 
       const event: LinearWebhookPayload = {
@@ -851,10 +868,16 @@ describe("event-router", () => {
       };
 
       const actions = route(event);
-      expect(actions).toEqual([]);
-      expect(config.logger.info).toHaveBeenCalledWith(
-        "Unmapped Linear user unknown-user mentioned in comment on issue-500",
-      );
+      expect(actions).toMatchObject([
+        {
+          type: "wake",
+          agentId: "linear-worker",
+          event: "comment.mention",
+          issueId: "issue-500",
+          identifier: "issue-500",
+          linearUserId: "default",
+        },
+      ]);
     });
   });
 
@@ -922,7 +945,7 @@ describe("event-router", () => {
       // human-user-123 is NOT in agentMapping, so the comment should be routed
       const actions = route(event);
       expect(actions).toHaveLength(1);
-      expect(actions[0].agentId).toBe("agent-1");
+      expect(actions[0].agentId).toBe("main");
     });
   });
 

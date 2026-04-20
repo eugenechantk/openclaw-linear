@@ -10,6 +10,11 @@ import {
   resolveUserId,
   resolveLabelIds,
   resolveProjectId,
+  createIssueComment,
+  issueHasRecentCommentBody,
+  fetchViewer,
+  updateIssueAssignee,
+  assignIssueToViewer,
 } from "../src/linear-api.js";
 
 const mockFetch = vi.fn();
@@ -303,5 +308,173 @@ describe("resolveProjectId", () => {
     await expect(resolveProjectId("Nonexistent")).rejects.toThrow(
       'Project "Nonexistent" not found',
     );
+  });
+});
+
+describe("createIssueComment", () => {
+  beforeEach(() => {
+    setApiKey("lin_api_test");
+  });
+
+  it("creates a comment for an issue identifier", async () => {
+    mockGraphqlResponse({
+      issues: { nodes: [{ id: "issue-1" }] },
+    });
+    mockGraphqlResponse({
+      commentCreate: {
+        success: true,
+        comment: { id: "comment-1", body: "Visible assistant text" },
+      },
+    });
+
+    const comment = await createIssueComment("ENG-42", "Visible assistant text");
+
+    expect(comment).toEqual({ id: "comment-1", body: "Visible assistant text" });
+    const createCall = mockFetch.mock.calls[1];
+    const requestBody = JSON.parse(createCall[1].body);
+    expect(requestBody.variables.input).toEqual({
+      issueId: "issue-1",
+      body: "Visible assistant text",
+    });
+  });
+
+  it("includes parent comment ID when provided", async () => {
+    mockGraphqlResponse({
+      commentCreate: {
+        success: true,
+        comment: { id: "comment-1", body: "Reply" },
+      },
+    });
+
+    await createIssueComment("issue-uuid", "Reply", "parent-1");
+
+    const requestBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(requestBody.variables.input).toEqual({
+      issueId: "issue-uuid",
+      body: "Reply",
+      parentId: "parent-1",
+    });
+  });
+});
+
+describe("issue assignment", () => {
+  beforeEach(() => {
+    setApiKey("lin_api_test");
+  });
+
+  it("fetches the Linear API viewer", async () => {
+    mockGraphqlResponse({
+      viewer: {
+        id: "openclaw-user",
+        name: "OpenClaw",
+        email: "openclaw@example.com",
+      },
+    });
+
+    await expect(fetchViewer()).resolves.toEqual({
+      id: "openclaw-user",
+      name: "OpenClaw",
+      email: "openclaw@example.com",
+    });
+  });
+
+  it("updates an issue assignee", async () => {
+    mockGraphqlResponse({
+      issueUpdate: {
+        success: true,
+        issue: {
+          id: "issue-uuid",
+          identifier: "ENG-42",
+          assignee: {
+            id: "openclaw-user",
+            name: "OpenClaw",
+            email: "openclaw@example.com",
+          },
+        },
+      },
+    });
+
+    const updated = await updateIssueAssignee("issue-uuid", "openclaw-user");
+
+    expect(updated).toEqual({
+      id: "issue-uuid",
+      identifier: "ENG-42",
+      assignee: {
+        id: "openclaw-user",
+        name: "OpenClaw",
+        email: "openclaw@example.com",
+      },
+    });
+    const requestBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(requestBody.variables).toEqual({
+      id: "issue-uuid",
+      input: { assigneeId: "openclaw-user" },
+    });
+  });
+
+  it("assigns an issue to the Linear API viewer", async () => {
+    mockGraphqlResponse({
+      viewer: {
+        id: "openclaw-user",
+        name: "OpenClaw",
+        email: "openclaw@example.com",
+      },
+    });
+    mockGraphqlResponse({
+      issueUpdate: {
+        success: true,
+        issue: {
+          id: "issue-uuid",
+          identifier: "ENG-42",
+          assignee: {
+            id: "openclaw-user",
+            name: "OpenClaw",
+            email: "openclaw@example.com",
+          },
+        },
+      },
+    });
+
+    const updated = await assignIssueToViewer("issue-uuid");
+
+    expect(updated?.assignee?.id).toBe("openclaw-user");
+    const requestBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(requestBody.variables.input).toEqual({ assigneeId: "openclaw-user" });
+  });
+});
+
+describe("issueHasRecentCommentBody", () => {
+  beforeEach(() => {
+    setApiKey("lin_api_test");
+  });
+
+  it("returns true when a recent comment has the same trimmed body", async () => {
+    mockGraphqlResponse({
+      issues: { nodes: [{ id: "issue-1" }] },
+    });
+    mockGraphqlResponse({
+      issue: {
+        comments: {
+          nodes: [
+            { body: "Existing comment" },
+            { body: "  Duplicate body  " },
+          ],
+        },
+      },
+    });
+
+    await expect(issueHasRecentCommentBody("ENG-42", "Duplicate body")).resolves.toBe(true);
+  });
+
+  it("returns false when no recent comment matches", async () => {
+    mockGraphqlResponse({
+      issue: {
+        comments: {
+          nodes: [{ body: "Different comment" }],
+        },
+      },
+    });
+
+    await expect(issueHasRecentCommentBody("issue-uuid", "New body")).resolves.toBe(false);
   });
 });

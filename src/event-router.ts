@@ -12,12 +12,15 @@ export type RouterAction = {
   linearUserId: string;
   /** Comment ID for mention events — used as dedup key in the queue. */
   commentId?: string;
+  commentBody?: string;
+  createdAt?: string;
 };
 
 export type StateAction = "add" | "remove" | "ignore";
 
 export type EventRouterConfig = {
   agentMapping: Record<string, string>;
+  defaultAgentId?: string;
   logger: {
     info: (message: string) => void;
     error: (message: string) => void;
@@ -308,14 +311,19 @@ function handleIssueCreate(
   config: EventRouterConfig,
 ): RouterAction[] {
   const assigneeId = event.data.assigneeId as string | undefined;
-  if (!assigneeId) return [];
 
-  const agentId = config.agentMapping[assigneeId];
+  // Resolve agent: mapped assignee, or default to "main" (Claude Code)
+  let agentId: string | undefined;
+  if (assigneeId) {
+    agentId = config.agentMapping[assigneeId];
+    if (!agentId) {
+      config.logger.info(
+        `Unmapped Linear user ${assigneeId} on ${String(event.data.id ?? "unknown")} — defaulting to ${config.defaultAgentId ?? "main"}`,
+      );
+    }
+  }
   if (!agentId) {
-    config.logger.info(
-      `Unmapped Linear user ${assigneeId} assigned to ${String(event.data.id ?? "unknown")}`,
-    );
-    return [];
+    agentId = config.defaultAgentId ?? "main";
   }
 
   const issueId = String(event.data.id ?? "unknown");
@@ -333,7 +341,7 @@ function handleIssueCreate(
       issueLabel,
       identifier,
       issuePriority,
-      linearUserId: assigneeId,
+      linearUserId: assigneeId ?? "default",
     },
   ];
 }
@@ -380,11 +388,9 @@ function handleComment(
     return [];
   }
 
-  // Skip comments authored by mapped agents to prevent webhook loops.
-  // When an agent posts a comment via the Linear API, the webhook fires
-  // back with the agent's userId as the comment author. Without this
-  // check, the agent would be woken up by its own comment.
-  const commentUserId = (event.data.user as Record<string, unknown> | undefined)?.id as string | undefined
+  // Preserve the broader mapped-agent guard for other agent accounts.
+  const commentUser = event.data.user as Record<string, unknown> | undefined;
+  const commentUserId = commentUser?.id as string | undefined
     ?? event.data.userId as string | undefined;
   if (commentUserId && config.agentMapping[commentUserId]) {
     config.logger.info(
@@ -394,14 +400,6 @@ function handleComment(
   }
 
   const commentId = String(event.data.id ?? "");
-  const bodyData = event.data.bodyData;
-  const mentionedIds = extractMentionedUserIds(body, bodyData, config.agentMapping);
-
-  if (mentionedIds.length === 0) {
-    return [];
-  }
-
-  const actions: RouterAction[] = [];
 
   const issueRef = event.data.issue as Record<string, unknown> | undefined;
   const issueId = String(issueRef?.id ?? event.data.issueId ?? "unknown");
@@ -411,29 +409,37 @@ function handleComment(
   const identifier = (issueRef?.identifier as string) ?? issueId;
   const issuePriority = (issueRef?.priority as number) ?? 0;
 
-  for (const userId of mentionedIds) {
-    const agentId = config.agentMapping[userId];
-    if (agentId) {
-      actions.push({
-        type: "wake",
-        agentId,
-        event: "comment.mention",
-        detail: `Mentioned in comment on issue ${issueLabel}\n\n> ${body}`,
-        issueId,
-        issueLabel,
-        identifier,
-        issuePriority,
-        linearUserId: userId,
-        commentId,
-      });
-    } else {
-      config.logger.info(
-        `Unmapped Linear user ${userId} mentioned in comment on ${issueId}`,
-      );
-    }
+  // Always route to the parent issue's session.
+  // Agent selection (Claude Code vs Codex) is determined by the issue's assignee,
+  // but routing is always by issue identifier — the gateway creates or reuses
+  // the session based on the peer ID.
+  const assigneeId = (issueRef?.assigneeId as string | undefined)
+    ?? (event.data.assigneeId as string | undefined);
+  let agentId = assigneeId ? config.agentMapping[assigneeId] : undefined;
+  if (!agentId) {
+    agentId = config.defaultAgentId ?? "main";
   }
 
-  return actions;
+  config.logger.info(
+    `Comment on ${identifier} — routing to ${agentId} session`,
+  );
+
+  return [
+    {
+      type: "wake",
+      agentId,
+      event: "comment.mention",
+      detail: `New comment on issue ${issueLabel}\n\n> ${body}`,
+      issueId,
+      issueLabel,
+      identifier,
+      issuePriority,
+      linearUserId: assigneeId ?? "default",
+      commentId,
+      commentBody: body,
+      createdAt: event.createdAt,
+    },
+  ];
 }
 
 export function createEventRouter(config: EventRouterConfig) {
